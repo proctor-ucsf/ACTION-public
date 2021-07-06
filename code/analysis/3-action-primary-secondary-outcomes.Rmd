@@ -1,0 +1,1212 @@
+---
+title: "ACTION trial"
+subtitle: "Primary and Secondary Outcome Analyses"
+author: "Ben Arnold ben.arnold@ucsf.edu"
+date: "updated: `r Sys.time()`"
+output: 
+  html_document:
+    theme: default
+    highlight: default
+    code_folding: hide
+    toc: true
+    toc_depth: 3
+    toc_float:
+      collapsed: true
+      smooth_scroll: true
+knit: (function(inputFile, encoding) {
+        rmarkdown::render(inputFile, 
+                          encoding   = encoding, 
+                          output_dir = "../../output/analysis"
+                          )})
+---
+
+# Summary
+
+Pre-specified primary and secondary outcome analyses for the ACTION trial.
+
+# Preamble / configuration
+
+```{r preamble, message = FALSE}
+#---------------------------------
+# source the project's configuration
+# file
+#---------------------------------
+library(here)
+here()
+source(here("code","config.R"))
+
+
+```
+
+
+# Load the data
+
+Load the final analysis dataset. This file was created by`ACTION_analysis_data_prep.R`.
+
+
+```{r load the data}
+#---------------------------------
+# load the pre-processed data
+
+# final public analysis dataset
+# created with ACTION_analysis_data_prep.R
+# and ACTION_create_public_datasets.R
+#---------------------------------
+d <- read_rds(here("data/public","ACTION_analysis_public.rds"))
+
+#---------------------------------
+# rename the public id to recordID
+#---------------------------------
+d %<>% rename(recordID = id_public)
+
+#---------------------------------
+# create a shorter named treatment
+# variable
+#---------------------------------
+d %<>%
+  mutate(tr = tr_received)
+
+#---------------------------------
+# convert symptom variables from
+# factor to numeric 0/1
+#---------------------------------
+ftnfn <- function(x) {
+  return(as.numeric(levels(x))[x])
+}
+
+d %<>%
+  mutate(across(.cols = c(contains("symptoms"),hospitalized_any,er_any, contains("hhsick_"),contains("ae3_")), .fns = ftnfn ) )
+
+```
+
+# Primary outcome
+
+Symptom free at 14 days
+
+Compare groups based on the proportion who were symptom free on day 14
+
+## Summary table
+```{r symptom free at day 14}
+#----------------------------------
+# summarize the number and %
+# who were symptom free at day 14
+#
+# including those who were missing
+#----------------------------------
+d14 <- d %>%
+  # subset the data just to relevant variables to make it smaller
+  select(recordID,tr,age,high_risk,starts_with("an"),starts_with("symptoms"),starts_with("ae3_")) %>%
+  group_by(tr) %>%
+  # Create a formatted symptom free factor
+  mutate( sympfreef = ifelse(symptomsfu_d14_None == 1, "Yes","No"),
+          sympfreef = factor(sympfreef)
+  )
+label(d14$sympfreef) <- "Symptom free"
+
+table1(~ sympfreef | tr, data = d14 )
+```
+
+## Prevalence difference and ratio
+
+Estimate the prevalence difference and prevalence ratio between groups. Use a non-parametric bootstrap for 95% confidence intervals. 
+
+```{r group means function}
+#----------------------------------
+# group_means()
+# function to calculate:
+# N, n, %, RD, RR
+#
+# @df      : dataframe that includes tr (Azithromycin/Placebo) and outcome
+# @outcome : outcome variable of interest
+#
+# returns:
+# a dataframe with 6 columns
+# outc  : outcome (arg)
+# tr    : treatment group
+# nmeas : number of indivs measured
+# npos  : number of indivs postive for outcome
+# prev  : npos/nmeas (prevalence)
+# rd    : risk difference (actually prevalence diff)
+# rr    : risk ratio  (actual prevalence ratio)
+#----------------------------------
+group_means <- function(df, outcome) {
+  outvar <- as.name(outcome)
+  df %>%
+    select(tr,!!outvar) %>%
+    group_by(tr) %>%
+    mutate(meas = ifelse(!is.na(!!outvar),1,0)) %>%
+    summarize(nmeas = sum(meas),
+            npos = sum(!!outvar, na.rm = TRUE),
+            prev = mean(!!outvar, na.rm = TRUE), 
+            .groups = "keep") %>%
+    ungroup() %>%
+    arrange(desc(tr)) %>%
+    mutate(rd = prev - lag(prev),
+           rr = prev / lag(prev), 
+           outc = outcome)
+}
+```
+
+```{r bootstrap ci function}
+#----------------------------------
+# boot_ci()
+# function to estimate non-parametric
+# bootstrap 95% confidence interval
+# (percentile) for the RD and RR
+# of a binary outcome with two groups
+#
+# estimates RD = Azithromycin - Placebo
+#           RR = Azithromycin / Placebo
+#
+# @df : data.frame dataframe that includes tr (Azithromycin/Placebo) and outcome
+# @outcome : binary outcome variable of interest
+# @nboot   : number of bootstrap replicates
+#
+# returns:
+# a dataframe with 5 columns
+# outc     : outcome (arg)
+# rd_min95 : risk difference lower 95% CI
+# rd_max95 : risk difference upper 95% CI
+# rr_min95 : risk ratio lower 95% CI
+# rr_max95 : risk ratio upper 95% CI
+#----------------------------------
+boot_ci <- function(df,outcome,nboot=100) {
+  outvar <- as.name(outcome)
+  di <- df %>% ungroup() %>% select(tr,!!outvar)
+  bootres <- foreach(bi = 1:nboot, .combine = rbind) %do% {
+    dii <- di[sample(1:nrow(di),nrow(di),replace = TRUE),]
+    mu0 <- mean(dii[dii$tr=="Placebo",2], na.rm = TRUE)
+    mu1 <- mean(dii[dii$tr=="Azithromycin",2], na.rm = TRUE)
+    data.frame(iter=bi,mu0,mu1)
+  }
+  get_boot_ci <- bootres %>%
+    mutate(rd = mu1 - mu0, 
+         rr = mu1 / mu0,
+         rd_min95 = quantile(rd,prob = 0.025, na.rm = TRUE),
+         rd_max95 = quantile(rd,prob = 0.975, na.rm = TRUE),
+         rr_min95 = quantile(rr[is.finite(rr)],prob = 0.025, na.rm = TRUE),
+         rr_max95 = quantile(rr[is.finite(rr)],prob = 0.975, na.rm = TRUE)
+         ) %>%
+  slice(1) %>%
+  select(starts_with("rd_"),starts_with("rr_")) %>%
+  mutate(outc =  outcome)
+  return(get_boot_ci)
+
+}
+```
+
+```{r binomial ci function}
+#----------------------------------
+# binomial_ci()
+# function to estimate the 95% CI
+# for a difference in proportions
+# between groups
+#
+# @gmdata  : a data.frame() returned by group_means() function (above)
+#
+# returns:
+# a dataframe with 3 columns
+# outc     : outcome (arg)
+# rd_min95 : risk difference lower 95% CI
+# rd_max95 : risk difference upper 95% CI
+#----------------------------------
+binomial_ci <- function(gmdata) {
+  btest <- prop.test(x=gmdata$npos[2:1], n = gmdata$nmeas[2:1], 
+                     alternative = "two.sided",
+                     conf.level = 0.95)
+  return(data.frame(outc = gmdata$outc[1], rd_min95 = btest$conf.int[1], rd_max95 = btest$conf.int[2]))
+  
+}
+
+```
+
+```{r permutation p-value function}
+#----------------------------------
+# permute_p()
+# function to estimate a permutation
+# p-value for a difference in means
+# between groups. 
+#
+# @df       : data.frame dataframe that includes tr (Azithromycin/Placebo) and outcome
+# @outcome  : outcome variable of interest
+# @npermute : number of permutation replicates
+#
+# returns:
+# an object of class "pvalue" from the coin package
+# to access the p-value, simply index the first returned object
+# e.g., 
+# p_est <- permute_p(df,outcome)
+#  p_est[1]
+#  to print the 99% CI for the p-value:
+#  p_est
+#----------------------------------
+permute_p <- function(df, outcome, npermute=1000) {
+  fmla <- as.formula(paste(outcome,"tr",sep="~"))
+  pti <- oneway_test(fmla, data= df, 
+                   distribution = approximate(nresample = npermute), 
+                   alternative = "two.sided")
+  
+  p_value <- pvalue(pti)
+  return(p_value)
+}
+
+```
+
+```{r d14 primary analysis}
+#----------------------------------
+# restrict to individuals 
+# not lost between days 0-14
+# and with non-missing outcomes at day 14
+#----------------------------------
+d14 %<>%
+  ungroup() %>%
+  filter(an14==1)
+
+#----------------------------------
+# estimate the PD and PR with
+# bootstrapped 95% CI and 
+# permutation p-value for symptom
+# free at 14 days
+#----------------------------------
+set.seed(12386324)
+mu_sympfree <- group_means(df=d14, outcome = "symptomsfu_d14_None")
+ci_sympfree <- boot_ci(df=d14, outcome = "symptomsfu_d14_None", nboot=1000)
+p_sympfree  <- permute_p(df=d14, outcome = "symptomsfu_d14_None", npermute = 10000 )
+
+#----------------------------------
+# do some formatting
+# and reshape group means to wide format
+#----------------------------------
+est_sympfree0 <- mu_sympfree %>%
+  filter(tr == "Azithromycin") %>%
+  select(outc,nmeas0=nmeas, npos0=npos, prev0=prev,starts_with("rd"),starts_with("rr"))
+ci_sympfree %<>%
+  mutate(tr = "Placebo",
+         p_value = p_sympfree)
+
+est_sympfree <- mu_sympfree %>%
+  filter(tr == "Placebo") %>%
+  select(outc,tr,nmeas,npos,prev) %>%
+  left_join(est_sympfree0, by="outc") %>%
+  left_join(ci_sympfree, by = c("outc","tr")) %>%
+  select(outcome = outc, nmeas0, npos0, prev0, nmeas,npos,prev,starts_with("rd"),starts_with("rr"),p_value) 
+
+
+
+#----------------------------------
+# make a table of results
+#----------------------------------
+est_sympfree_table <- est_sympfree %>%
+  mutate(pct0_print = paste0("(",sprintf("%1.0f",prev0*100),"%)"),
+         pct1_print = paste0("(",sprintf("%1.0f",prev*100),"%)"),
+         rd_print = paste0(sprintf("%1.2f",rd)," (",sprintf("%1.2f",rd_min95),", ",sprintf("%1.2f",rd_max95),")"),
+         rr_print = paste0(sprintf("%1.2f",rr)," (",sprintf("%1.2f",rr_min95),", ",sprintf("%1.2f",rr_max95),")")
+         ) %>%
+  mutate(outcome = "Symptom free") %>%
+  select(outcome,nmeas0,npos0,pct0_print,nmeas,npos,pct1_print,rd_print,rr_print,p_value)
+
+options(knitr.kable.NA = '')
+knitr::kable(est_sympfree_table, digits = 3, align = c("l","r","r","r","r","r","r","c","c","c"),
+             caption = "Symptom Free at 14 days by treatment group.",
+             col.names = c("Outcome","N","Pos.","(%)","N","Pos.","(%)","PD (95% CI)","PR (95% CI)","P-value*")) %>%
+  kable_styling(bootstrap_options = "striped") %>%
+  add_header_above(c(" " = 1, "Azithromycin" = 3, "Placebo" = 3, " " = 1, " " = 1, " " = 1)) %>%
+  footnote(
+    symbol=c("Permutation test P-value, 10,000 replicates","N: number measured; Pos.: number positive; PD: prevalence difference; PR: prevalence ratio."))
+
+
+```
+## Subgroup analyses
+
+Pre-specified subgroup analyses:
+
+* High risk versus low risk patients, with high risk patients defined as: age >60 y and reported hypertension, cardiovascular disease, diabetes, or obstructive or restrictive lung disease at enrollment.
+
+* Age >60 y versus $\leq$ 60 y
+
+* Presence of COVID-19 symptoms at enrollment versus asymptomatic at enrollment
+
+Test for interaction (effect modification) on the additive scale assuming a linear-binomial model. We assess statistical significance of the interaction with the coefficient on the interaction term between treatment and each effect modifier in the linear-binomial model. 
+
+Note: too few participants were classified as "high risk" to do that subgroup analysis. We have presented raw counts and estimates of means below, but it is not included in the final table due to sparse data. 
+
+### Interaction by high vs. low risk
+
+We cannot analyze this subgroup, as only 5 participants were classified as "high risk".
+
+Include raw output below to document
+```{r interaction by high risk}
+#----------------------------------
+# cross-tab of patients by
+# treatment and high risk status
+#----------------------------------
+table(d14$tr, d14$high_risk)
+
+#----------------------------------
+# estimates among low risk
+# participants
+#----------------------------------
+( mu_sympfree_lowrisk <- group_means(df=d14 %>% filter(high_risk==0), outcome = "symptomsfu_d14_None") )
+
+#----------------------------------
+# estimates among high risk
+# participants
+#----------------------------------
+( mu_sympfree_highrisk <- group_means(df=d14 %>% filter(high_risk==1), outcome = "symptomsfu_d14_None") )
+
+
+```
+
+### Interaction by age
+```{r interaction by age}
+#----------------------------------
+# estimates among participants <= 60 y
+#----------------------------------
+set.seed(19642)
+mu_sympfree_lt60 <- group_means(df=d14 %>% filter(age<=60), outcome = "symptomsfu_d14_None")
+ci_sympfree_lt60 <- binomial_ci(mu_sympfree_lt60) %>%
+  select(outc, everything()) %>%
+  mutate(tr = "Placebo")
+
+#----------------------------------
+# estimates among participants > 60 y
+#----------------------------------
+mu_sympfree_gt60 <- group_means(df=d14 %>% filter(age>60), outcome = "symptomsfu_d14_None")
+ci_sympfree_gt60 <- binomial_ci(mu_sympfree_gt60) %>%
+  select(outc, everything()) %>%
+  mutate(tr = "Placebo")
+
+#----------------------------------
+# test of interaction
+#----------------------------------
+d14 %<>%
+  mutate(age60 = ifelse(age>60,1,0))
+
+fit_age60 <- glm(symptomsfu_d14_None ~ (tr*age60), 
+                 data=d14, 
+                 family=binomial(link="identity")
+                 )
+(sum_fit_age60   <- broom::tidy(fit_age60) )
+ci_sympfree_gt60$p_value <- sum_fit_age60$p.value[4]
+```
+
+### Interaction by asymptomatic status
+
+```{r interaction by asymptomatic}
+#----------------------------------
+# identify individuals who where
+# asymptomatic at baseline
+#----------------------------------
+d14 %<>%
+  mutate(asymp = ifelse(
+    symptoms_Fever+symptoms_Cough+symptoms_Diarrhea+symptoms_AbPain+symptoms_Anosmia+symptoms_Conj+symptoms_SoreThroat+symptoms_ShortBreath+symptoms_Myalgia+symptoms_Fatigue+symptoms_Dizzy+symptoms_Other == 0, 1, 0)
+    )
+
+
+#----------------------------------
+# estimates among asymptomatic
+# at enrollment
+#----------------------------------
+set.seed(23324)
+mu_sympfree_asym <- group_means(df=d14 %>% filter(asymp==1), outcome = "symptomsfu_d14_None")
+ci_sympfree_asym <- binomial_ci(mu_sympfree_asym) %>%
+  select(outc, everything()) %>%
+  mutate(tr = "Placebo")
+
+#----------------------------------
+# estimates among symptomatic
+# at enrollment
+#----------------------------------
+mu_sympfree_symp <- group_means(df=d14 %>% filter(asymp==0), outcome = "symptomsfu_d14_None")
+ci_sympfree_symp <- binomial_ci(mu_sympfree_symp) %>%
+  select(outc, everything()) %>%
+  mutate(tr = "Placebo")
+
+
+#----------------------------------
+# test of interaction
+#----------------------------------
+fit_asymp <- glm(symptomsfu_d14_None ~ (tr*asymp), 
+                 data=d14, 
+                 family=binomial(link="identity")
+                 )
+(sum_fit_asymp   <- broom::tidy(fit_asymp) )
+ci_sympfree_symp$p_value <- sum_fit_asymp$p.value[4]
+
+
+```
+
+
+## Symptom Free Table
+
+Summary table of symptom free analysis, including subgroups. 
+
+```{r format summary table for primary outcome and subgroup analyses}
+#----------------------------------
+# do some formatting
+# and reshape group means to wide format
+# Age <=60 and >60 subgroups
+#----------------------------------
+est_agelt60_0 <- mu_sympfree_lt60 %>%
+  filter(tr == "Azithromycin") %>%
+  select(outc,nmeas0=nmeas, npos0=npos, prev0=prev,starts_with("rd"))
+
+est_agelt60 <- mu_sympfree_lt60 %>%
+  filter(tr == "Placebo") %>%
+  select(outc,tr,nmeas,npos,prev) %>%
+  left_join(est_agelt60_0, by="outc") %>%
+  left_join(ci_sympfree_lt60, by = c("outc","tr")) %>%
+  select(outcome = outc, nmeas0, npos0, prev0, nmeas,npos,prev,starts_with("rd")) 
+
+est_agegt60_0 <- mu_sympfree_gt60 %>%
+  filter(tr == "Azithromycin") %>%
+  select(outc,nmeas0=nmeas, npos0=npos, prev0=prev,starts_with("rd"),)
+
+est_agegt60 <- mu_sympfree_gt60 %>%
+  filter(tr == "Placebo") %>%
+  select(outc,tr,nmeas,npos,prev) %>%
+  left_join(est_agegt60_0, by="outc") %>%
+  left_join(ci_sympfree_gt60, by = c("outc","tr")) %>%
+  select(outcome = outc, nmeas0, npos0, prev0, nmeas,npos,prev,starts_with("rd"),p_value) 
+
+#----------------------------------
+# do some formatting
+# and reshape group means to wide format
+# Asymptomatic and symptomatic subgroups
+#----------------------------------
+est_asym_0 <- mu_sympfree_asym %>%
+  filter(tr == "Azithromycin") %>%
+  select(outc,nmeas0=nmeas, npos0=npos, prev0=prev,starts_with("rd"))
+
+est_asym <- mu_sympfree_asym %>%
+  filter(tr == "Placebo") %>%
+  select(outc,tr,nmeas,npos,prev) %>%
+  left_join(est_asym_0, by="outc") %>%
+  left_join(ci_sympfree_asym, by = c("outc","tr")) %>%
+  select(outcome = outc, nmeas0, npos0, prev0, nmeas,npos,prev,starts_with("rd")) 
+
+est_symp_0 <- mu_sympfree_symp %>%
+  filter(tr == "Azithromycin") %>%
+  select(outc,nmeas0=nmeas, npos0=npos, prev0=prev,starts_with("rd"))
+
+est_symp <- mu_sympfree_symp %>%
+  filter(tr == "Placebo") %>%
+  select(outc,tr,nmeas,npos,prev) %>%
+  left_join(est_symp_0, by="outc") %>%
+  left_join(ci_sympfree_symp, by = c("outc","tr")) %>%
+  select(outcome = outc, nmeas0, npos0, prev0, nmeas,npos,prev,starts_with("rd"),p_value) 
+
+
+#----------------------------------
+# stack tthe stratified estimates
+# by age and by symptomatic at baseline
+#
+# label the outcomes/rows
+# create formatted columns for
+# a printed table
+#----------------------------------
+est_sympfree_subgroups <- est_agelt60 %>%
+  mutate(outcome = "Age ≤60 years") %>%
+  bind_rows(est_agegt60) %>%
+  mutate(outcome = ifelse(outcome == "symptomsfu_d14_None", "Age >60 years",outcome)) %>%
+  bind_rows(est_asym) %>%
+  mutate(outcome = ifelse(outcome == "symptomsfu_d14_None", "Asymptomatic",outcome)) %>%
+  bind_rows(est_symp) %>%
+  mutate(outcome = ifelse(outcome == "symptomsfu_d14_None", "Symptomatic",outcome)) %>%
+  # create formatted columns
+  mutate(pct0_print = paste0("(",sprintf("%1.0f",prev0*100),"%)"),
+         pct1_print = paste0("(",sprintf("%1.0f",prev*100),"%)"),
+         rd_print = paste0(sprintf("%1.2f",rd)," (",sprintf("%1.2f",rd_min95),", ",sprintf("%1.2f",rd_max95),")")
+         ) %>%
+  select(outcome,nmeas0,npos0,pct0_print,nmeas,npos,pct1_print,rd_print,p_value) %>%
+  # add an rr_print column to stack with the overall estimates
+  mutate(rr_print = "")
+
+#----------------------------------
+# stack the overall estimate
+# with the subgroup estimates
+# label the overall estimate "All patients"
+# and convert the p_value var from
+# class pvalue to numeric before binding
+#----------------------------------
+est_sympfree_table2 <- est_sympfree_table %>%
+  mutate(outcome = "All patients",
+         p_value = as.numeric(p_value)
+         ) %>%
+  bind_rows(est_sympfree_subgroups)
+```
+
+```{r formatted table for primary and subgroup analyses}
+options(knitr.kable.NA = '')
+knitr::kable(est_sympfree_table2, digits = 3, align = c("l","r","r","r","r","r","r","c","c","c"),
+             caption = "Symptom Free at 14 days by treatment group.",
+             col.names = c("Analysis","N","Symp. Free","(%)","N","Symp. Free","(%)","PD (95% CI)","PR (95% CI)","P-value*")) %>%
+  kable_styling(bootstrap_options = "basic") %>%
+  add_header_above(c(" " = 1, "Azithromycin" = 3, "Placebo" = 3, " " = 1, " " = 1, " " = 1)) %>%
+  pack_rows("Overall", 1, 1) %>%
+  pack_rows("Subgroups by Age", 2, 3) %>%
+  pack_rows("Subgroups by COVID-19 Symptoms at Enrollment †", 4, 5) %>%
+  footnote(
+    symbol=c("Permutation test P-value, 10,000 replicates (primary analysis) or P-value for interaction on the additive scale (subgroup analyses).","One participant in the azithromycin group did not complete a baseline symptom survey and was excluded from this subgroup analysis.","N: number measured; Symp. Free: number symptom free; PD: prevalence difference; PR: prevalence ratio, only estimated in the overall analysis."))
+
+```
+
+```{r save table of primary and subgroup analyses}
+write_csv(est_sympfree_table2, path = here("output/analysis","action-primary-subgroup-results.csv"))
+```
+
+# Secondary Outcomes at 14d
+
+```{r d14 secondary analysis, warning = FALSE}
+#----------------------------------
+# map the analysis functions 
+# (above in the primary analysis chunk)
+# over all outcomes of interest
+#----------------------------------
+
+# get outcome names
+outvars <- d14 %>% 
+  ungroup() %>%
+  select(starts_with("symptomsfu_d14_"),-symptomsfu_d14_None)  %>%
+  names()
+
+# estimate Ns, means, and RD
+est_means <- map_dfr(.x = outvars, .f = group_means, df=d14) %>%
+  select(outc,everything())
+
+# estimate binomial 95% CIs
+est_cis <- foreach(outi = outvars, .combine = rbind) %do% {
+  cii <- binomial_ci(gmdata = est_means %>% filter(outc==outi))
+  data.frame(cii)
+}
+
+# estimate permutation P-values, 10,000 replicates
+# set seed for reproducibility
+set.seed(32384)
+est_pvalues <- map_dbl(.x = outvars, .f = permute_p, df=d14, npermute = 10000)
+# add the p-values onto the CI data
+est_cis$tr = "Placebo"
+est_cis$p_value <- est_pvalues
+
+
+```
+
+
+```{r d14 analysis table}
+#----------------------------------
+# do some formatting
+# and reshape group means to wide format
+#----------------------------------
+est_means0 <- est_means %>%
+  filter(tr == "Azithromycin") %>%
+  select(outc,nmeas0=nmeas, npos0=npos, prev0=prev,starts_with("rd"))
+
+d14_ests <- est_means %>%
+  filter(tr == "Placebo") %>%
+  select(outc,tr,nmeas,npos,prev) %>%
+  left_join(est_means0, by="outc") %>%
+  left_join(est_cis, by = c("outc","tr")) %>%
+  select(outcome = outc, nmeas0, npos0, prev0, nmeas,npos,prev,starts_with("rd"),p_value) 
+
+#----------------------------------
+# formatting for printed table
+#----------------------------------
+d14_table <- d14_ests %>%
+  mutate(pct0_print = paste0("(",sprintf("%1.0f",prev0*100),"%)"),
+         pct1_print = paste0("(",sprintf("%1.0f",prev*100),"%)"),
+         rd_print = paste0(sprintf("%1.2f",rd)," (",sprintf("%1.2f",rd_min95),", ",sprintf("%1.2f",rd_max95),")")
+         ) %>%
+  # make the outcomes more pretty formatting
+  mutate(outlab = case_when(
+    outcome == "symptomsfu_d14_Fever" ~ "Fever",
+    outcome == "symptomsfu_d14_Cough" ~ "Cough",
+    outcome == "symptomsfu_d14_Diarrhea" ~ "Diarrhea",
+    outcome == "symptomsfu_d14_AbPain" ~ "Abdominal pain",
+    outcome == "symptomsfu_d14_Anosmia" ~ "Anosmia",
+    outcome == "symptomsfu_d14_Conj" ~ "Conjunctivitis",
+    outcome == "symptomsfu_d14_SoreThroat" ~ "Sore throat",
+    outcome == "symptomsfu_d14_ShortBreath" ~ "Shortness of breath",
+    outcome == "symptomsfu_d14_Myalgia" ~ "Myalgia",
+    outcome == "symptomsfu_d14_Fatigue" ~ "Fatigue",
+    outcome == "symptomsfu_d14_Dizzy" ~ "Dizziness",
+    outcome == "symptomsfu_d14_Other" ~ "Other",
+    TRUE ~ as.character(NA)
+  )
+         ) %>%
+  select(outlab,npos0,pct0_print,npos,pct1_print,rd_print,p_value)
+         
+#----------------------------------
+# get placebo and treatment Ns
+# for column headers
+#----------------------------------
+ns_14 <- table(d14$tr)
+col_pl <- paste0("Placebo (N=",ns_14["Placebo"],")")
+col_az <- paste0("Azithromycin (N=",ns_14["Azithromycin"],")")
+col_specs <- data.frame(header_names = c(" ",col_az,col_pl," "," "), colspan = c(1,2,2,1,1))
+
+#----------------------------------
+# make a table of results
+#----------------------------------
+options(knitr.kable.NA = '')
+knitr::kable(d14_table, digits = 3, align = c("l","r","r","r","r","c","c"),
+             caption = "Secondary outcomes at 14 days by treatment group.",
+             col.names = c("Outcome","N","(%)","N","(%)","PD (95% CI)","P-value*")) %>%
+  kable_styling(bootstrap_options = "striped") %>%
+  add_header_above(col_specs) %>%
+  footnote(
+    symbol=c("Permutation test P-value, 10,000 replicates","N: number positive; PD: prevalence difference."))
+
+```
+
+```{r save table of d14 analyses}
+write_csv(d14_table, path = here("output/analysis","action-secondary-d14-results.csv"))
+```
+
+# Symptoms at day 21
+
+Summarize patient-reported symptoms at 21d, a pre-specified secondary outcome.
+
+```{r d21 secondary analysis, warning = FALSE}
+
+#----------------------------------
+# subset the data to those who
+# were present at day 21
+#----------------------------------
+d21 <- d %>%
+  filter(an21==1) %>%
+  # subset the data just to relevant variables to make it smaller
+  select(recordID,tr,age,high_risk,starts_with("an"),starts_with("symptoms")) %>%
+  group_by(tr) 
+
+#----------------------------------
+# map the analysis functions 
+# (above in the primary analysis chunk)
+# over all outcomes of interest
+#----------------------------------
+
+# get outcome names
+outvars <- d21 %>% 
+  ungroup() %>%
+  select(symptomsfu_d21_None,starts_with("symptomsfu_d21_"))  %>%
+  names()
+
+# estimate Ns, means, and RD
+est_means <- map_dfr(.x = outvars, .f = group_means, df=d21) %>%
+  select(outc,everything())
+
+# estimate binomial 95% CIs
+est_cis <- foreach(outi = outvars, .combine = rbind) %do% {
+  cii <- binomial_ci(gmdata = est_means %>% filter(outc==outi))
+  data.frame(cii)
+}
+
+# estimate permutation P-values, 10,000 replicates
+# set seed for reproducibility
+set.seed(45262)
+est_pvalues <- map_dbl(.x = outvars, .f = permute_p, df=d21, npermute = 10000)
+# add the p-values onto the CI data
+est_cis$tr = "Placebo"
+est_cis$p_value <- est_pvalues
+
+
+```
+
+
+```{r d21 analysis table}
+#----------------------------------
+# do some formatting
+# and reshape group means to wide format
+#----------------------------------
+est_means0 <- est_means %>%
+  filter(tr == "Azithromycin") %>%
+  select(outc,nmeas0=nmeas, npos0=npos, prev0=prev,starts_with("rd"))
+
+d21_ests <- est_means %>%
+  filter(tr == "Placebo") %>%
+  select(outc,tr,nmeas,npos,prev) %>%
+  left_join(est_means0, by="outc") %>%
+  left_join(est_cis, by = c("outc","tr")) %>%
+  select(outcome = outc, nmeas0, npos0, prev0, nmeas,npos,prev,starts_with("rd"),p_value) 
+
+#----------------------------------
+# formatting for printed table
+#----------------------------------
+d21_table <- d21_ests %>%
+  mutate(pct0_print = paste0("(",sprintf("%1.0f",prev0*100),"%)"),
+         pct1_print = paste0("(",sprintf("%1.0f",prev*100),"%)"),
+         rd_print = paste0(sprintf("%1.2f",rd)," (",sprintf("%1.2f",rd_min95),", ",sprintf("%1.2f",rd_max95),")")
+         ) %>%
+  # make the outcomes more pretty formatting
+  mutate(outlab = case_when(
+    outcome == "symptomsfu_d21_None" ~ "Absence of symptoms",
+    outcome == "symptomsfu_d21_Fever" ~ "Fever",
+    outcome == "symptomsfu_d21_Cough" ~ "Cough",
+    outcome == "symptomsfu_d21_Diarrhea" ~ "Diarrhea",
+    outcome == "symptomsfu_d21_AbPain" ~ "Abdominal pain",
+    outcome == "symptomsfu_d21_Anosmia" ~ "Anosmia",
+    outcome == "symptomsfu_d21_Conj" ~ "Conjunctivitis",
+    outcome == "symptomsfu_d21_SoreThroat" ~ "Sore throat",
+    outcome == "symptomsfu_d21_ShortBreath" ~ "Shortness of breath",
+    outcome == "symptomsfu_d21_Myalgia" ~ "Myalgia",
+    outcome == "symptomsfu_d21_Fatigue" ~ "Fatigue",
+    outcome == "symptomsfu_d21_Dizzy" ~ "Dizziness",
+    outcome == "symptomsfu_d21_Other" ~ "Other",
+    TRUE ~ as.character(NA)
+  )
+         ) %>%
+  select(outlab,npos0,pct0_print,npos,pct1_print,rd_print,p_value)
+         
+#----------------------------------
+# get placebo and treatment Ns
+# for column headers
+#----------------------------------
+ns_21 <- table(d21$tr)
+col_pl <- paste0("Placebo (N=",ns_21["Placebo"],")")
+col_az <- paste0("Azithromycin (N=",ns_21["Azithromycin"],")")
+col_specs <- data.frame(header_names = c(" ",col_az,col_pl," "," "), colspan = c(1,2,2,1,1))
+
+#----------------------------------
+# make a table of results
+#----------------------------------
+options(knitr.kable.NA = '')
+knitr::kable(d21_table, digits = 3, align = c("l","r","r","r","r","c","c"),
+             caption = "Secondary outcomes at 21 days by treatment group.",
+             col.names = c("Outcome","N","(%)","N","(%)","PD (95% CI)","P-value*")) %>%
+  kable_styling(bootstrap_options = "striped") %>%
+  add_header_above(col_specs) %>%
+  footnote(
+    symbol=c("Permutation test P-value, 10,000 replicates","N: number positive; PD: prevalence difference."))
+
+```
+
+
+
+# Additional outcomes through day 21
+
+Summarize hospitalization, emergency room visits, and household member sick by day 21.
+
+## Hospitalized
+```{r hospitalization analysis, warning= FALSE}
+#----------------------------------
+# summarize the number and %
+# who were hospitalized by day 21
+#----------------------------------
+
+# restrict to patients measured through day 21
+d21 <- d %>%
+  filter(an21==1)
+
+#----------------------------------
+# estimate the PD with
+# bootstrapped 95% CI and 
+# permutation p-value
+# for hospitalization by day 21
+#----------------------------------
+set.seed(98624)
+mu_hosp21 <- group_means(df=d21, outcome = "hospitalized_any")
+ci_hosp21 <- binomial_ci(mu_hosp21)
+p_hosp21  <- permute_p(df=d21, outcome = "hospitalized_any", npermute = 10000 )
+
+#----------------------------------
+# do some formatting
+# and reshape group means to wide format
+#----------------------------------
+est_hosp0 <- mu_hosp21 %>%
+  filter(tr == "Azithromycin") %>%
+  select(outc,nmeas0=nmeas, npos0=npos, prev0=prev,starts_with("rd"))
+ci_hosp21 %<>%
+  mutate(tr = "Placebo",
+         p_value = p_hosp21)
+
+est_hosp21 <- mu_hosp21 %>%
+  filter(tr == "Placebo") %>%
+  select(outc,tr,nmeas,npos,prev) %>%
+  left_join(est_hosp0, by="outc") %>%
+  left_join(ci_hosp21, by = c("outc","tr")) %>%
+  select(outcome = outc, nmeas0, npos0, prev0, nmeas,npos,prev,starts_with("rd"),p_value) %>%
+  mutate(p_value = as.numeric(p_value))
+
+
+```
+
+
+## ER visits
+```{r ER visits analysis}
+#----------------------------------
+# summarize the number and %
+# who had an ER visit by day 21
+#----------------------------------
+#----------------------------------
+# estimate the PD with
+# bootstrapped 95% CI and 
+# permutation p-value for 
+# ER visit by day 21
+#----------------------------------
+set.seed(234692365)
+mu_er21 <- group_means(df=d21, outcome = "er_any")
+ci_er21 <- binomial_ci(mu_er21)
+p_er21  <- permute_p(df=d21, outcome = "er_any", npermute = 10000 )
+
+#----------------------------------
+# do some formatting
+# and reshape group means to wide format
+#----------------------------------
+est_er0 <- mu_er21 %>%
+  filter(tr == "Azithromycin") %>%
+  select(outc,nmeas0=nmeas, npos0=npos, prev0=prev,starts_with("rd"))
+ci_er21 %<>%
+  mutate(tr = "Placebo",
+         p_value = p_er21)
+
+est_er21 <- mu_er21 %>%
+  filter(tr == "Placebo") %>%
+  select(outc,tr,nmeas,npos,prev) %>%
+  left_join(est_er0, by="outc") %>%
+  left_join(ci_er21, by = c("outc","tr")) %>%
+  select(outcome = outc, nmeas0, npos0, prev0, nmeas,npos,prev,starts_with("rd"),p_value) %>%
+  mutate(p_value = as.numeric(p_value))
+
+
+```
+
+## Sick household members
+
+Did a member of the household become sick between enrollment and day 21?
+Limit the analysis to participants with other household members
+
+```{r sick household members, warning= FALSE}
+#---------------------------------
+# limit to participants who live
+# with at least one other person
+# 259 of 263 HHs with >1 person included
+#---------------------------------
+table(d$numhhold)
+dhh <- d %>%
+  filter(numhhold > 1) %>%
+  select(recordID, tr, numhhold, starts_with("hhsick_"))
+
+#---------------------------------
+# tally the total number of people
+# who became sick during follow-up
+# in each household
+#
+# among 259 households with >1 person, 
+# 56 did not complete
+# any information about household
+# members and are excluded
+#
+# final sample is 203 households
+# (134 azithromycin, 69 placebo)
+# and 800 other household members
+# beyond the enrolled participants
+#---------------------------------
+dim(dhh)
+dhh %<>%
+  # include households with some NAs
+  # but set totsick to NA if all measurements are NA
+  mutate(totsick = rowSums(across(starts_with("hhsick_") ),na.rm = TRUE),
+         totsick = ifelse(is.na(hhsick_d3) & is.na(hhsick_d7) & is.na(hhsick_d14) & is.na(hhsick_d21),NA,totsick))
+
+table(dhh$totsick, useNA = "ifany")
+table(dhh$tr)
+
+# filter to households with measurements
+# calculate number of other household members
+# (excluding the participant)
+dhh %<>%
+  filter(!is.na(totsick)) %>%
+  mutate(nothers = numhhold-1)
+
+sum(dhh$nothers)
+
+#---------------------------------
+# create an expanded dataset
+# of one record for each individual
+#---------------------------------
+dhhl <- data.frame(recordID = rep(dhh$recordID,dhh$nothers))
+dhhl %<>%
+  left_join(dhh, by = "recordID") %>%
+  group_by(recordID) %>%
+  mutate(hhnum = row_number(),
+         hhsick = ifelse(hhnum <= totsick, 1, 0)) %>%
+  ungroup()
+
+#---------------------------------
+# estimate Ns, means, and RD
+#---------------------------------
+hh_means <- group_means(df=dhhl,outcome="hhsick")
+
+#---------------------------------
+# estimate bootstrap 95% CIs for 
+# the risk difference, resampling
+# households with replacement
+#---------------------------------
+nboot <- 1000
+pids <- unique(dhhl$recordID)
+bsamp <- matrix(sample(pids,size=nboot*length(pids), replace = TRUE),ncol=nboot)
+hh_boot <- foreach(bi = 1:nboot, .combine = rbind) %dopar% {
+  set.seed(bi)
+  di <- data.frame(recordID = bsamp[,bi]) %>%
+    left_join(dhhl, by = "recordID")
+  mui <-  group_means(df=di,outcome="hhsick")
+  data.frame(booti = bi, rd = mui$rd[2])
+}
+# calculate percentile 95% CIs
+hh_ci <- quantile(hh_boot$rd, probs = c(0.025, 0.975))
+
+hh_means %<>%
+  select(outc,tr,nmeas,npos,prev,rd) %>%
+  mutate(rd_min95 = c(NA,hh_ci[1]),
+         rd_max95 = c(NA,hh_ci[2]))
+
+#---------------------------------
+# estimate permutation P-value, 10,000 replicates
+# set seed for reproducibility
+#---------------------------------
+set.seed(63453)
+hh_pvalue <- permute_p(df=dhhl, outcome="hhsick", npermute = 10000)
+hh_means %<>%
+  mutate(p_value = c(NA,hh_pvalue))
+#----------------------------------
+# do some formatting
+# and reshape group means to wide format
+#----------------------------------
+hh_means0 <- hh_means %>%
+  filter(tr == "Azithromycin") %>%
+  select(outc,nmeas0=nmeas, npos0=npos, prev0=prev,starts_with("rd"),p_value)
+
+hh_ests <- hh_means %>%
+  filter(tr == "Placebo") %>%
+  select(outc,tr,nmeas,npos,prev) %>%
+  left_join(hh_means0, by="outc") %>%
+  select(outcome = outc, nmeas0, npos0, prev0, nmeas,npos,prev,starts_with("rd"),p_value) 
+
+```
+
+## Combined Table, Secondary Outcomes through D21
+
+```{r combine and format d21 estimates}
+#----------------------------------
+# combine estimates across outcome
+# groups
+#----------------------------------
+ests_d21 <- est_hosp21 %>%
+  bind_rows(est_er21) %>%
+  bind_rows(hh_ests) %>%
+  bind_rows(d21_ests)
+
+
+#----------------------------------
+# Format for printing a table
+#----------------------------------
+d21_table <- ests_d21 %>%
+  mutate(pct0_print = paste0("(",sprintf("%1.0f",prev0*100),"%)"),
+         pct1_print = paste0("(",sprintf("%1.0f",prev*100),"%)"),
+         rd_print = paste0(sprintf("%1.2f",rd)," (",sprintf("%1.2f",rd_min95),", ",sprintf("%1.2f",rd_max95),")")
+         ) %>%
+  # make the outcomes more pretty formatting
+  mutate(outlab = case_when(
+    outcome == "hospitalized_any" ~ "Patient hospitalized",
+    
+    outcome == "er_any" ~ "Patient emergency department or urgent care visit",
+    
+    outcome == "hhsick" ~ "COVID-19 illness among other household members‡",
+
+    outcome == "symptomsfu_d21_None" ~ "Absence of symptoms",
+    outcome == "symptomsfu_d21_Fever" ~ "Fever",
+    outcome == "symptomsfu_d21_Cough" ~ "Cough",
+    outcome == "symptomsfu_d21_Diarrhea" ~ "Diarrhea",
+    outcome == "symptomsfu_d21_AbPain" ~ "Abdominal pain",
+    outcome == "symptomsfu_d21_Anosmia" ~ "Anosmia",
+    outcome == "symptomsfu_d21_Conj" ~ "Conjunctivitis",
+    outcome == "symptomsfu_d21_SoreThroat" ~ "Sore throat",
+    outcome == "symptomsfu_d21_ShortBreath" ~ "Shortness of breath",
+    outcome == "symptomsfu_d21_Myalgia" ~ "Myalgia",
+    outcome == "symptomsfu_d21_Fatigue" ~ "Fatigue",
+    outcome == "symptomsfu_d21_Dizzy" ~ "Dizziness",
+    outcome == "symptomsfu_d21_Other" ~ "Other",
+  
+    TRUE ~ as.character(NA)
+  )
+         ) %>%
+  select(outlab,nmeas0,npos0,pct0_print,nmeas,npos,pct1_print,rd_print,p_value)
+      
+#----------------------------------
+# make a table of results
+#----------------------------------
+options(knitr.kable.NA = '')
+knitr::kable(d21_table, digits = 3, align = c("l","r","r","r","r","r","r","c","c"),
+             caption = "Secondary outcomes through day 21 and differences between groups",
+             col.names = c("Outcome","N","n","(%)","N","n","(%)","Difference (95% CI)","P-value*")) %>%
+  kable_styling(bootstrap_options = "striped") %>%
+  add_header_above(c(" " = 1, "Azithromycin" = 3, "Placebo" = 3, " " = 1, " " = 1)) %>%
+  pack_rows(group_label = "Incident outcomes by day 21",start_row = 1, end_row = 3) %>%
+  pack_rows(group_label = "Patient symptoms at day 21",start_row = 4, end_row = 16) %>%
+  footnote(
+    symbol=c("Permutation test P-value, 10,000 replicates","N: number measured; n: number with the outcome.","Includes participants from 69 households in the placebo group and 134 households in the azithromycin group. 95% CIs estimated through bootstrap resampling households with replacement. "))  
+
+```
+
+```{r save table of d21 analyses}
+write_csv(d21_table, path = here("output/analysis","action-secondary-d21-results.csv"))
+```
+
+# Adverse events by day 3
+
+Among participants measured at day 3 of follow-up, summarize the proportion with different symptoms.
+
+```{r summarize AEs at day 3}
+#----------------------------------
+# for participants measured at 
+# day 3, limit the data to 
+# symptoms measured then.
+#
+# then summarize the number and %
+# who had each symptom
+#----------------------------------
+dae <- d %>%
+  group_by(tr) %>%
+  # restrict to individuals measured at day 3
+  filter(an3==1) %>%
+  # limit data to AE measures at day 3
+  select(recordID,tr,starts_with("ae3")) %>%
+  mutate( rash = ifelse(ae3_rash == 1, "Yes","No"),
+          abdompain = ifelse(ae3_abdompain == 1, "Yes","No"),
+          nausea = ifelse(ae3_nausea == 1, "Yes","No"),
+          diarrhea = ifelse(ae3_diarrhea == 1, "Yes","No"),
+          vomit = ifelse(ae3_vomit == 1, "Yes","No"),
+          other = ifelse(ae3_other == 1, "Yes","No"), 
+          n_aes = ae3_rash+ae3_abdompain+ae3_nausea+ae3_diarrhea+ae3_vomit+ae3_other,
+          ae3_atleast1 = ifelse(n_aes>0,1,0),
+          ae3_morethan1 = ifelse(n_aes>1,1,0),
+          ae_atleast1 = ifelse(n_aes >0, "Yes","No"),
+          ae_morethan1 = ifelse(n_aes>1,"Yes","No")
+  ) %>%
+  mutate(rash = factor(rash),
+         abdompain = factor(abdompain),
+         nausea = factor(nausea),
+         diarrhea = factor(diarrhea),
+         vomit = factor(vomit),
+         other = factor(other),
+         ae_atleast1 = factor(ae_atleast1),
+         ae_morethan1 = factor(ae_morethan1))
+label(dae$rash) <- "Rash"
+label(dae$abdompain) <- "Abdominal pain"
+label(dae$nausea) <- "Nausea"
+label(dae$diarrhea) <- "Diarrhea"
+label(dae$vomit) <- "Vomiting"
+label(dae$other) <- "Other symptoms"
+label(dae$ae_atleast1) <- "At least one adverse event"
+label(dae$ae_morethan1) <- "More than one adverse event"
+
+table1(~ rash + abdompain + nausea + diarrhea + vomit + other + ae_atleast1 + ae_morethan1 | tr, data = dae )
+```
+
+Estimate the risk difference between groups. Use a non-parametric bootstrap for 95% confidence intervals, as above in the 14-day follow-up outcome analyses.
+
+```{r risk difference of AEs by day 3, warning = FALSE}
+#----------------------------------
+# map the analysis functions 
+# (above in the primary analysis chunk)
+# over all d3 AE outcomes of interest
+#----------------------------------
+
+# get outcome names
+aevars <- dae %>% 
+  ungroup() %>%
+  select(starts_with("ae3_"),-ae3_none)  %>%
+  names()
+
+# estimate Ns, means, and RD, RR
+est_ae_means <- map_dfr(.x = aevars, .f = group_means, df=dae) %>%
+  select(outc,everything())
+
+# estimate binomial 95% CIs
+est_ae_cis <- foreach(outi = aevars, .combine = rbind) %do% {
+  cii <- binomial_ci(gmdata = est_ae_means %>% filter(outc==outi))
+  data.frame(cii)
+}
+
+# estimate permutation P-values, 10,000 replicates
+# set seed for reproducibility
+set.seed(45234)
+est_ae_pvalues <- map_dbl(.x = aevars, .f = permute_p, df=dae, npermute = 10000)
+# add the p-values onto the CI data
+est_ae_cis$tr <- "Placebo"
+est_ae_cis$p_value <- est_ae_pvalues
+
+```
+
+```{r AE analysis table}
+#----------------------------------
+# do some formatting
+# and reshape group means to wide format
+#----------------------------------
+est_ae_means0 <- est_ae_means %>%
+  filter(tr == "Azithromycin") %>%
+  select(outc,nmeas0=nmeas, npos0=npos, prev0=prev,starts_with("rd"))
+
+ae_ests <- est_ae_means %>%
+  filter(tr == "Placebo") %>%
+  select(outc,tr,nmeas,npos,prev) %>%
+  left_join(est_ae_means0, by="outc") %>%
+  left_join(est_ae_cis, by = c("outc","tr")) %>%
+  select(outcome = outc, nmeas0, npos0, prev0, nmeas,npos,prev,starts_with("rd"),p_value) 
+
+#----------------------------------
+# formatting for printed table
+#----------------------------------
+ae_table <- ae_ests %>%
+  mutate(pct0_print = paste0("(",sprintf("%1.0f",prev0*100),"%)"),
+         pct1_print = paste0("(",sprintf("%1.0f",prev*100),"%)"),
+         rd_print = paste0(sprintf("%1.2f",rd)," (",sprintf("%1.2f",rd_min95),", ",sprintf("%1.2f",rd_max95),")")
+         ) %>%
+  # make the outcomes more pretty formatting
+  mutate(outlab = case_when(
+    outcome == "ae3_vomit" ~ "Vomit",
+    outcome == "ae3_nausea" ~ "Nausea",
+    outcome == "ae3_diarrhea" ~ "Diarrhea",
+    outcome == "ae3_rash" ~ "Rash",
+    outcome == "ae3_abdompain" ~ "Abdominal Pain",
+    outcome == "ae3_other" ~ "Other",
+    outcome == "ae3_atleast1" ~ "At least one adverse event",
+    outcome == "ae3_morethan1" ~ "More than one adverse event",
+    TRUE ~ as.character(NA)
+  )
+         ) %>%
+  select(outlab,npos0,pct0_print,npos,pct1_print,rd_print,p_value)
+        
+#----------------------------------
+# get placebo and treatment Ns
+# for column headers
+#----------------------------------
+ns_3 <- table(dae$tr)
+col_pl <- paste0("Placebo (N=",ns_3["Placebo"],")")
+col_az <- paste0("Azithromycin (N=",ns_3["Azithromycin"],")")
+col_specs <- data.frame(header_names = c(" ",col_az,col_pl," "," "), colspan = c(1,2,2,1,1))
+
+#----------------------------------
+# make a table of results
+#----------------------------------
+options(knitr.kable.NA = '')
+knitr::kable(ae_table, digits = 3, align = c("l","r","r","r","r","c","c"),
+             caption = "Risk of adverse events by day 3 and differences between groups.",
+             col.names = c("Adverse Event","N","(%)","N","(%)","RD (95% CI)","P-value*")) %>%
+  kable_styling(bootstrap_options = "striped") %>%
+  add_header_above(col_specs) %>%
+  footnote(
+    symbol=c("Permutation test P-value, 10,000 replicates","N: number with event; RD: risk difference of the adverse event by day 3."))  
+```
+
+
+```{r save table of d3 ae analyses}
+write_csv(ae_table, path = here("output/analysis","action-ae-d3-results.csv"))
+```
+
+
+
+# Session Info
+```{r session info}
+sessionInfo()
+```
+

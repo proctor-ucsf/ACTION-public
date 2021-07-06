@@ -1,0 +1,248 @@
+---
+title: "ACTION primary analysis codebooks - public"
+author: "Prepared by Fanice Nyatigo"
+output:
+  html_document:
+    toc: true
+    toc_depth: 4
+    toc_float: true
+    code_folding: 'hide'
+    self_contained: true
+  pdf_document:
+    toc: yes
+    toc_depth: 4
+    latex_engine: xelatex
+---
+
+### Consort Dataframe
+
+```{r setup, warning=F, message=F}
+knitr::opts_chunk$set(
+  warning = F, # show warnings during codebook generation
+  message = F, # show messages during codebook generation
+  error = F, # do not interrupt codebook generation in case of errors,
+  echo = F  # don't show all R code
+)
+ggplot2::theme_set(ggplot2::theme_bw())
+
+```
+
+
+```{r prepare_codebook}
+source(here::here("code/config.R"))
+
+df.consort <- rio::import(here("data/public/ACTION_consort_public.rds"))
+df.analysis <- rio::import(here("data/public/ACTION_analysis_public.rds"))
+
+```
+
+
+```{r}
+var_label(df.consort) <-  list(id_public = "Unique participant ID",
+                               elig_test = "Is the test eligible? Eligible test is positive",
+                               elig_window = "Is the test window eligible? Eligible test window is a maximum 7 days to the screening date?",
+                               elig_age = "Is the patient age-eligible? Eligible age is over 18",          
+                               elig_allergy = "Is the patient eligible given allergies? Eligible patients should not be allergic to macrolides",
+                               elig_hosp = "Is the patient eligible given hospitalization status? Eligible patients should not be currently hospitalized",          
+                               elig_hcq55 = "Is the patient eligible based on age and hydroxychloroquine intake? Eligible patients should not have been on hydroxychloroquine in the past 7 days if over 55 years old",        
+                               elig_nelfwar = "Is the patient currently taking nelfinavir or warfin? Eligible patients should not be on nelfinavir or warfarin",      
+                               elig_preg = "Is the patient pregnant? Eligible patients should not currently be pregnant.",          
+                               elig_maildrug = "Is the patient able to receive the study drug in the mail? Eligible patients should be able to.",     
+                               elig_onlineforms = "Is the patient able to fill out online forms? Eligible patients should be able to.",  
+                               elig_no_other = "Is the patient eligible with no other reason for ineligibility?",     
+                               #consented = "Did the patient give consent?",           
+                               refused_antibiotics = "Did the patient refuse to participate because of outside antibiotic use?", 
+                               refused_placebo = "Did the patient refuse to participate because they did not want to receive a placebo?.",   
+                               refused_other = "Did the patient refuse to participate because of any other reason?",     
+                               ltfu3 = "Was the patient lost to follow-up between days 0 and 3?",
+                               ltfu7 = "Was the patient lost to follow-up between days 3 and 7?",
+                               ltfu14 = "Was the patient lost to follow-up between days 7 and 14?",
+                               ltfu21 = "Was the patient lost to follow-up between days 14 and 21?",
+                               an3 = "as the patient measured at day 3?",
+                               an7 = "Was the patient measured at day 7?", 
+                               an14 = "Was the patient measured at day 14?",
+                               an21 = "Was the patient measured at day 21?",
+                               #tr_assigned = "Treatment group that the the patient was assigned",
+                               tr_received = "Treatment group that the the patient received")
+
+# function to create value lables for binary variables
+add_binary_labels <- function(x) {
+  haven::labelled(x, labels = c(Yes = 1, No = 0))
+  x
+}
+
+# create value labels
+# assign labels
+binary_vars <- df.consort %>% select(-c(id_public, consented, starts_with("tr"))) %>% colnames()
+tr_vars <- df.consort %>% select(starts_with("tr")) %>% colnames()
+df.consort <- df.consort %>% 
+  mutate(across(binary_vars,  add_binary_labels)) %>% 
+  mutate(consented = labelled(consented, labels = c(Yes = 1, No = 2, `Patient could not be reached for consent` = 3), label = "Did the patient give consent?"))
+
+rio::export(df.consort, here::here("data/public/ACTION_consort_public.rds"))
+```
+
+```{r}
+# consort metadata
+metadata(df.consort)$name <- "Consort flow data"
+metadata(df.consort)$description <- "Track participant flow in the ACTION trial."
+metadata(df.consort)$creator <- "Fanice Nyatigo"
+metadata(df.consort)$datePublished <- Sys.Date()
+metadata(df.consort)$citation <- "https://clinicaltrials.gov/ct2/show/NCT04332107"
+metadata(df.consort)$url <- "https://proctor.ucsf.edu/action-trial"
+```
+
+```{r}
+var_label(df.analysis) <-  list(id_public = "Unique participant ID", 
+                                symptoms_Fever = "Has the patient experienced fever at baseline?", 
+                                symptoms_Cough = "Has the patient experienced cough at baseline?", 
+                                 symptoms_Diarrhea  = "Has the patient experienced diarrhea at baseline?", 
+                                 symptoms_AbPain  = "Has the patient experienced abdominal pain at baseline?", 
+                                 symptoms_Anosmia  = "Has the patient experienced Anosmia (inability to smell ortaste) at baseline?", 
+                                 symptoms_Conj  = "Has the patient experienced conjunctivitis/pink eye at baseline?", 
+                                 symptoms_SoreThroat  = "Has the patient experienced sore throat at baseline?", 
+                                 symptoms_ShortBreath  = "Has the patient experienced shortness of breath at baseline?", 
+                                 symptoms_Myalgia  = "Has the patient experienced myalgia (muscle pain) at baseline?", 
+                                 symptoms_Fatigue  = "Has the patient experienced fatigue/tiredness at baseline?", 
+                                 symptoms_Dizzy  = "Has the patient experienced dizziness at baseline?", 
+                                 symptoms_Other  = "Has the patient experienced other symptoms at baseline?",
+                                 symptoms_None  = "Has the patient experienced none symptoms at baseline?",
+                                 cigarettes  = "Does the patient currently use cigarettes at least once per week on an average week?", 
+                                 marijuana  = "Does the patient currently use marijuana at least once per week on an average week?", 
+                                 vaping  = "Does the patient currently use e-cigarettes/vaping at least once per week on an average week?", 
+                                 cigars  = "Does the patient currently use cigars at least once per week on an average week?", 
+                                 smoke_none  = "Does the patient currently use none of the smoking products?", 
+                                 smoke_no_answer  = "The patient prefer not to answer for smoking products usage question", 
+                                 comorb_stroke  = "Has the patient ever been diagnosed with stroke?", 
+                                 comorb_asthma  = "Has the patient ever been diagnosed with asthma?", 
+                                 comorb_copd  = "Has the patient ever been diagnosed with chronic obstructive pulmonary disease (COPD)?", 
+                                 comorb_hypertension  = "Has the patient ever been diagnosed with hypertension (high bloodpressure)?", 
+                                 comorb_diabetes  = "Has the patient ever been diagnosed with diabetes?", 
+                                 comorb_cardiovascular  = "Has the patient ever been diagnosed with coronary heart disease?", 
+                                 comorb_kidney  = "Has the patient ever been diagnosed with chronic kidney disease?", 
+                                 comorb_cancer  = "Has the patient ever been diagnosed with cancer?", 
+                                 comorb_none  = "Has the patient ever been diagnosed with none of condition?", 
+                                 metformin  = "Is the patient currently taking metformin?", 
+                                 omeprazole  = "Is the patient currently taking omeprazole?", 
+                                 valproic  = "Is the patient currently taking valproic acid (Depakote)?", 
+                                 indomethacin  = "Is the patient currently taking indomethacin (Indocin)?", 
+                                 mycophenolic  = "Is the patient currently taking mycophenolic acid (CellCept, Myfortic)?", 
+                                 ribavarin  = "Is the patient currently taking ribavarin?", 
+                                 tacrolimus  = "Is the patient currently taking tacrolimus?", 
+                                 medic_other  = "Is the patient currently taking other medications?", 
+                                 vit_multi  = "Is the patient currently taking multi-vitamin?", 
+                                 vit_c  = "Is the patient currently taking vitamin C (ascorbic acid)?", 
+                                 zinc  = "Is the patient currently taking zinc?", 
+                                 vit_d  = "Is the patient currently taking vitamin D?", 
+                                 omega3  = "Is the patient currently taking Omega-3 fatty acid/fish oil?", 
+                                 vit_other  = "Is the patient currently taking other vitamin or supplements?", 
+                                 ae3_vomit  = "Has the patient had vomiting since he/she the study medication?", 
+                                 ae3_nausea  = "Has the patient had nausea since he/she took the study medication?", 
+                                 ae3_diarrhea  = "Has the patient had diarrhea since he/she took the study medication?", 
+                                 ae3_rash  = "Has the patient had rash since he/she took the study medication?", 
+                                 ae3_abdompain  = "Has the patient had abdominal pain since he/she took the study medication?", 
+                                 ae3_other  = "Has the patient had other symptoms since he/she took the study medication?", 
+                                 ae3_none  = "Has the patient had none symptom since he/she took the study medication?", 
+                                 symptomsfu_d3_Fever  = "Was the patient experiencing fever at day 3?", 
+                                 symptomsfu_d3_Cough  = "Was the patient experiencing cough at day 3?", 
+                                 symptomsfu_d3_Diarrhea  = "Was the patient experiencing diarrhea at day 3?", 
+                                 symptomsfu_d3_AbPain  = "Was the patient experiencing abdominal pain at day 3?", 
+                                 symptomsfu_d3_Anosmia  = "Was the patient experiencing anosmia (inability tosmell or taste) at day 3?", 
+                                 symptomsfu_d3_Conj  = "Was the patient experiencing conjunctivitis/pink eye at day 3?", 
+                                 symptomsfu_d3_SoreThroat  = "Was the patient experiencing sore throat at day 3?", 
+                                 symptomsfu_d3_ShortBreath  = "Was the patient experiencing shortness of breath at day 3?", 
+                                 symptomsfu_d3_Myalgia  = "Was the patient experiencing myalgia (muscle pain) at day 3?", 
+                                 symptomsfu_d3_Fatigue  = "Was the patient experiencing fatigue/tiredness at day 3?", 
+                                 symptomsfu_d3_Dizzy  = "Was the patient experiencing dizziness at day 3?", 
+                                 symptomsfu_d3_Other  = "Was the patient experiencing other covid19 symptoms at day 3?", 
+                                 symptomsfu_d3_None  = "Was the patient experiencing none covid19 symptom at day 3?", 
+                                 #day_3_followup_form_complete  = "Has the patient completed day 3 follow-up form?", 
+                                 symptomsfu_d7_Fever  = "Was the patient experiencing fever at day 7?", 
+                                 symptomsfu_d7_Cough  = "Was the patient experiencing cough at day 7?", 
+                                 symptomsfu_d7_Diarrhea  = "Was the patient experiencing diarrhea at day 7?", 
+                                 symptomsfu_d7_AbPain  = "Was the patient experiencing abdominal pain at day 7?", 
+                                 symptomsfu_d7_Anosmia  = "Was the patient experiencing anosmia (inability tosmell or taste) at day 7?", 
+                                 symptomsfu_d7_Conj  = "Was the patient experiencing conjunctivitis/pink eye at day 7?", 
+                                 symptomsfu_d7_SoreThroat  = "Was the patient experiencing sore throat at day 7?", 
+                                 symptomsfu_d7_ShortBreath  = "Was the patient experiencing shortness of breath at day 7?", 
+                                 symptomsfu_d7_Myalgia  = "Was the patient experiencing myalgia (muscle pain) at day 7?", 
+                                 symptomsfu_d7_Fatigue  = "Was the patient experiencing fatigue/tiredness at day 7?", 
+                                 symptomsfu_d7_Dizzy  = "Was the patient experiencing dizziness at day 7?", 
+                                 symptomsfu_d7_Other  = "Was the patient experiencing other covid19 symptoms at day 7?", 
+                                 symptomsfu_d7_None  = "Was the patient experiencing none covid19 symptom at day 7?", 
+                                 #day_7_followup_form_complete  = "Has the patient completed day 7 follow-up form?", 
+                                 symptomsfu_d14_Fever  = "Was the patient experiencing fever at day 14?", 
+                                 symptomsfu_d14_Cough  = "Was the patient experiencing cough at day 14?", 
+                                 symptomsfu_d14_Diarrhea  = "Was the patient experiencing diarrhea at day 14?", 
+                                 symptomsfu_d14_AbPain  = "Was the patient experiencing abdominal pain at day 14?", 
+                                 symptomsfu_d14_Anosmia  = "Was the patient experiencing anosmia (inability tosmell or taste) at day 14?", 
+                                 symptomsfu_d14_Conj  = "Was the patient experiencing conjunctivitis/pink eye at day 14?", 
+                                 symptomsfu_d14_SoreThroat  = "Was the patient experiencing sore throat at day 14?", 
+                                 symptomsfu_d14_ShortBreath  = "Was the patient experiencing shortness of breath at day 14?", 
+                                 symptomsfu_d14_Myalgia  = "Was the patient experiencing myalgia (muscle pain) at day 14?", 
+                                 symptomsfu_d14_Fatigue  = "Was the patient experiencing fatigue/tiredness at day 14?", 
+                                 symptomsfu_d14_Dizzy  = "Was the patient experiencing dizziness at day 14?", 
+                                 symptomsfu_d14_Other  = "Was the patient experiencing other covid19 symptoms at day 14?", 
+                                 symptomsfu_d14_None  = "Was the patient experiencing none covid19 symptom at day 14?", 
+                                 #day_14_followup_form_complete  = "Has the patient completed day 14 follow-up form?", 
+                                 symptomsfu_d21_Fever  = "Was the patient experiencing fever at day 21?", 
+                                 symptomsfu_d21_Cough  = "Was the patient experiencing cough at day 21?", 
+                                 symptomsfu_d21_Diarrhea  = "Was the patient experiencing diarrhea at day 21", 
+                                 symptomsfu_d21_AbPain  = "Was the patient experiencing abdominal pain at day 21?", 
+                                 symptomsfu_d21_Anosmia  = "Was the patient experiencing anosmia (inability tosmell or taste) at day 21?", 
+                                 symptomsfu_d21_Conj  = "Was the patient experiencing conjunctivitis/pink eye at day 21?", 
+                                 symptomsfu_d21_SoreThroat  = "Was the patient experiencing sore throat at day 21?", 
+                                 symptomsfu_d21_ShortBreath  = "Was the patient experiencing shortness of breath at day 21?", 
+                                 symptomsfu_d21_Myalgia  = "Was the patient experiencing myalgia (muscle pain) at day 21?", 
+                                 symptomsfu_d21_Fatigue  = "Was the patient experiencing fatigue/tiredness at day 21?", 
+                                 symptomsfu_d21_Dizzy  = "Was the patient experiencing dizziness at day 21?", 
+                                 symptomsfu_d21_Other  = "Was the patient experiencing other covid19 symptoms at day 21?", 
+                                 symptomsfu_d21_None  = "Was the patient experiencing none covid19 symptom at day 21?", 
+                                 #day_21_followup_form_complete  = "Has the patient completed day 21 follow-up form?", 
+                                 ltfu3  = "Was the patient lost to follow-up between days 0 and 3?", 
+                                 ltfu7  = "Was the patient lost to follow-up between days 3 and 7?", 
+                                 ltfu14  = "Was the patient lost to follow-up between days 7 and 14?",
+                                 ltfu21  = "Was the patient lost to follow-up between days 14 and 21?",
+                                 an3 = "as the patient measured at day 3?",
+                                 an7 = "Was the patient measured at day 7?", 
+                                 an14 = "Was the patient measured at day 14?",
+                                 an21 = "Was the patient measured at day 21?",
+                                 # tr_assigned = "Treatment group that the the patient was assigned",
+                                 tr_received = "Treatment group that the the patient received",
+                                 age  = "Age of the patient", 
+                                 test_to_enroll  = "Days between enrollment and +ve test", 
+                                 region  = "Region of the patient's address", 
+                                 hospitalized_any  = "Has the patient stayed in hahospital setting for 24 hours or longer during the study?", 
+                                 er_any  = "Has the patient visited the emergency room or urgent care during the study?", 
+                                 high_risk  = "Was the patient high risk?"
+                                )
+
+rio::export(df.analysis, here::here("data/public/ACTION_analysis_public.rds"))
+```
+
+```{r}
+# analysis metadata
+metadata(df.analysis)$name <- "Analysis dataset"
+metadata(df.analysis)$description <- "Final analytic dataset for the ACTION trial."
+metadata(df.analysis)$creator <- "Fanice Nyatigo and Joyce Hu"
+metadata(df.analysis)$datePublished <- Sys.Date()
+metadata(df.analysis)$citation <- "https://clinicaltrials.gov/ct2/show/NCT04332107"
+metadata(df.analysis)$url <- "https://proctor.ucsf.edu/action-trial"
+```
+
+```{r codebook}
+codebook(df.consort, 
+         detailed_variables = F,
+         detailed_scales = F,
+         survey_overview = F,
+         missingness_report = F,
+         #metadata_table = F,
+         metadata_json = F)
+codebook(df.analysis,
+         detailed_variables = F,
+         detailed_scales = F,
+         survey_overview = F,
+         missingness_report = F, 
+         #metadata_table = F,
+         metadata_json = F)
+```

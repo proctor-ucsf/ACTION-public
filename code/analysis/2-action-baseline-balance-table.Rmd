@@ -1,0 +1,487 @@
+---
+title: "ACTION trial"
+subtitle: "Baseline balance"
+author: "Ben Arnold ben.arnold@ucsf.edu"
+date: "updated: `r Sys.time()`"
+output: 
+  html_document:
+    theme: default
+    highlight: default
+    code_folding: hide
+    toc: true
+    toc_depth: 3
+    toc_float:
+      collapsed: true
+      smooth_scroll: true
+knit: (function(inputFile, encoding) {
+        rmarkdown::render(inputFile, 
+                          encoding   = encoding, 
+                          output_dir = "../../output/analysis"
+                          )})
+---
+
+# Summary
+
+Summarize baseline characteristics by randomized group for (a) the entire enrolled population and (b) the population that completed follow-up.
+
+In response to peer-reviewer comments, additionally summarize baseline characteristics by three additional groups:
+* by randomized gropu among the population lost to follow-up
+* whether or not participants completed follow-up
+* by whether or not the participants complied with their assigned treatment (to assess characteristics associated with compliance/non-compliance)
+
+
+# Preamble / configuration
+
+```{r preamble, message = FALSE}
+#---------------------------------
+# source the project's configuration
+# file
+#---------------------------------
+library(here)
+here()
+source(here("code","config.R"))
+```
+
+
+# Load the data
+
+Load the final analysis dataset. This file was created by`ACTION_analysis_data_prep.R`.
+
+
+```{r load the data}
+#---------------------------------
+# load the pre-processed data
+
+# final public analysis dataset
+# created with ACTION_analysis_data_prep.R
+# and ACTION_create_public_datasets.R
+#---------------------------------
+
+d <- read_rds(here("data/public","ACTION_analysis_public.rds"))
+dc <- read_rds(here("data/public","ACTION_consort_public.rds"))
+
+#---------------------------------
+# rename the public id to recordID
+#---------------------------------
+d %<>% rename(recordID = id_public)
+dc %<>% rename(recordID = id_public)
+
+#---------------------------------
+# create a shorter named treatment
+# variable 
+#---------------------------------
+d %<>%
+  mutate(tr = tr_received)
+
+#---------------------------------
+# recode some variables
+# as factors to use with table1()
+#---------------------------------
+dt <- d %>%
+  mutate(
+  # alcohol and smoking as Y/N factors
+  alcoholYN = ifelse(alcohol == 1,"Yes","No"),
+  alcoholYN = factor(alcoholYN),
+  cigarettesYN = ifelse(cigarettes == 1, "Yes","No"),
+  cigarettesYN = factor(cigarettesYN),
+  marijuanaYN = ifelse(marijuana == 1, "Yes","No"),
+  marijuanaYN = factor(marijuanaYN),
+  vapingYN = ifelse(vaping == 1, "Yes","No"),
+  vapingYN = factor(vapingYN),
+  cigarsYN = ifelse(cigars == 1, "Yes","No"),
+  cigarsYN = factor(cigarsYN),
+  # comorbidities as Y/N factors
+  asthmaYN = ifelse(comorb_asthma==1,"Yes","No"),
+  asthmaYN = factor(asthmaYN),
+  copdYN = ifelse(comorb_copd==1,"Yes","No"),
+  copdYN = factor(copdYN),
+  hypertensionYN = ifelse(comorb_hypertension==1,"Yes","No"),
+  hypertensionYN = factor(hypertensionYN),
+  diabetesYN = ifelse(comorb_diabetes==1,"Yes","No"),
+  diabetesYN = factor(diabetesYN),
+  cardiovascularYN = ifelse(comorb_cardiovascular==1,"Yes","No"),
+  cardiovascularYN = factor(cardiovascularYN),
+  kidneyYN = ifelse(comorb_kidney==1,"Yes","No"),
+  kidneyYN = factor(kidneyYN),
+  cancerYN = ifelse(comorb_cancer==1,"Yes","No"),
+  cancerYN = factor(cancerYN),
+  strokeYN = ifelse(comorb_stroke==1,"Yes","No"),
+  strokeYN = factor(strokeYN),
+  # macrolide use
+  current_macrolide = ifelse(takemacrolide==1,"Yes","No"),
+  current_macrolide = factor(current_macrolide),
+  # chloroquine use
+  current_chloroquine = ifelse(chloroquine==1,"Yes","No"),
+  current_chloroquine = factor(current_chloroquine),
+  # other medication use as Y/N factors
+  current_acearb_inhibitor = ifelse(inhibitor==1,"Yes","No"),
+  current_metformin = ifelse(metformin==1,"Yes","No"),
+  current_metformin = factor(current_metformin),
+  current_omeprazole = ifelse(omeprazole==1,"Yes","No"),
+  current_omeprazole = factor(current_omeprazole),
+  current_valproic = ifelse(valproic==1,"Yes","No"),
+  current_valproic = factor(current_valproic),
+  current_indomethacin = ifelse(indomethacin==1,"Yes","No"),
+  current_indomethacin = factor(current_indomethacin),
+  current_mycophenolic = ifelse(mycophenolic==1,"Yes","No"),
+  current_mycophenolic = factor(current_mycophenolic),
+  current_ribavarin = ifelse(ribavarin==1,"Yes","No"),
+  current_ribavarin = factor(current_ribavarin),
+  current_tacrolimus = ifelse(tacrolimus==1,"Yes","No"),
+  current_tacrolimus = factor(current_tacrolimus),
+  # vitamins as Y/N factors
+  vit_multi = ifelse(vit_multi==1,"Yes","No"),
+  vit_multi = factor(vit_multi),
+  vit_c = ifelse(vit_c==1,"Yes","No"),
+  vit_c = factor(vit_c),
+  vit_zinc = ifelse(zinc==1,"Yes","No"),
+  vit_zinc = factor(vit_zinc),
+  vit_d = ifelse(vit_d==1,"Yes","No"),
+  vit_d = factor(vit_d),
+  vit_omega3 = ifelse(omega3==1,"Yes","No"),
+  vit_omega3 = factor(vit_omega3),
+  vit_other = ifelse(vit_other==1,"Yes","No"),
+  vit_other = factor(vit_other),
+  # baseline symptoms as Y/N factors
+  bl_Fever = ifelse(symptoms_Fever==1,"Yes","No"),
+  bl_Fever = factor(bl_Fever),
+  bl_Cough = ifelse(symptoms_Cough==1,"Yes","No"),
+  bl_Cough = factor(bl_Cough),
+  bl_Diarrhea = ifelse(symptoms_Diarrhea==1,"Yes","No"),
+  bl_Diarrhea = factor(bl_Diarrhea),
+  bl_AbPain = ifelse(symptoms_AbPain==1,"Yes","No"),
+  bl_AbPain = factor(bl_AbPain),
+  bl_Anosmia = ifelse(symptoms_Anosmia==1,"Yes","No"),
+  bl_Anosmia = factor(bl_Anosmia),
+  bl_Conj = ifelse(symptoms_Conj==1,"Yes","No"),
+  bl_Conj = factor(bl_Conj),
+  bl_SoreThroat = ifelse(symptoms_SoreThroat==1,"Yes","No"),
+  bl_SoreThroat = factor(bl_SoreThroat),
+  bl_ShortBreath = ifelse(symptoms_ShortBreath==1,"Yes","No"),
+  bl_ShortBreath = factor(bl_ShortBreath),
+  bl_Myalgia = ifelse(symptoms_Myalgia==1,"Yes","No"),
+  bl_Myalgia = factor(bl_Myalgia),
+  bl_Fatigue = ifelse(symptoms_Fatigue==1,"Yes","No"),
+  bl_Fatigue = factor(bl_Fatigue),
+  bl_Dizzy = ifelse(symptoms_Dizzy==1,"Yes","No"),
+  bl_Dizzy = factor(bl_Dizzy),
+  bl_Other = ifelse(symptoms_Other==1,"Yes","No"),
+  bl_Other = factor(bl_Other),
+  bl_None = ifelse(symptoms_None==1,"Yes","No"),
+  bl_None= factor(bl_None),
+  # sum up the number of symptoms that each participant had at baseline
+  bl_NumSymp = rowSums(across(.cols = c(symptoms_Fever, symptoms_Cough, symptoms_Diarrhea, symptoms_AbPain, symptoms_Anosmia, symptoms_Conj, symptoms_SoreThroat, symptoms_ShortBreath, symptoms_Myalgia, symptoms_Fatigue, symptoms_Dizzy, symptoms_Other),.fns = function(x) as.numeric(ifelse(x==1,1,0)))),
+  bl_MultSymp = ifelse(bl_NumSymp > 1, "Yes","No"),
+  bl_MultSymp = factor(bl_MultSymp),
+  
+  # convert difftime to numeric for age and days between test and enrollment
+  test_to_enroll = as.numeric(test_to_enroll),
+  age = as.numeric(age)
+         )
+
+#----------------------------------
+# recode race "not specified"
+# as missing, per journal request
+#----------------------------------
+dt$race[dt$race=="Not Specified"] <- NA
+dt %<>%
+  mutate(race = factor(race))
+
+#----------------------------------
+# subset the data just to relevant
+# variables to make it smaller
+#----------------------------------
+dt %<>%
+  select(recordID,an14,tr,age,gender,region,race,
+         ends_with("YN"),
+         starts_with("current_"), 
+         starts_with("vit_"),
+         starts_with("bl_"), 
+         duration, test_to_enroll
+         )
+
+# shorten some labels for display
+label(dt$duration) <- "Days between symptoms and COVID19 test"
+# label(dt$vit_other) <- "Currently taking other vit or supp?"
+```
+
+# Baseline Balance
+
+## Examine quantitative distributions
+
+For a few continuous or count outcomes, examine their distributions to inform whether to report the mean (SD) or median (IQR) in the baseline balance table.  The script will generate both summaries, but we will choose the appropriate summary based on the variable distributions.
+
+Age, duration of symptoms, days between COVID-19 test and enrollment, and number of symptoms reported at enrollment.
+
+Based on the distributions below, report median and IQR
+
+```{r summarize quantitative variables at enrollment}
+summary(dt %>% select(age, duration, test_to_enroll, bl_NumSymp))
+```
+
+
+```{r distribution of age}
+ggplot(data = dt, aes(x = age)) +
+  geom_histogram(alpha = 0.5, bins = 30) +
+  scale_x_continuous(breaks = seq(20,80,by=10)) +
+  scale_y_continuous(breaks = seq(0,30,by=5)) +
+  coord_cartesian(xlim = c(18, 80), ylim=c(0,30)) +
+  labs(x = "age (years)", title = "Distribution of age at enrollment") +
+  theme_minimal()
+```
+
+```{r distribution of duration}
+ggplot(data = dt, aes(x = duration)) +
+  geom_histogram(alpha = 0.5, bins = 30) +
+  scale_x_continuous(breaks = seq(1,10,by=1)) +
+  scale_y_continuous(breaks = seq(0,60,by=10)) +
+  coord_cartesian(xlim = c(1, 10), ylim = c(0,60)) +
+  labs(x = "Duration of symptoms at enrollment (days)", y = "N participants",  y = "N participants", title = "Distribution of duration of symptoms") +
+  theme_minimal()
+```
+
+
+```{r distribution of time from test to enrollment}
+ggplot(data = dt, aes(x = test_to_enroll)) +
+  geom_histogram(alpha = 0.5, bins = 30) +
+  scale_x_continuous(breaks = seq(0,10,by=1)) +
+  scale_y_continuous(breaks = seq(0,60,by=10)) +
+  coord_cartesian(xlim = c(0, 10), ylim = c(0,60)) +
+  labs(x = "Time between COVID-19 test and enrollment (days)", y = "N participants", title = "Distribution of days between COVID-19 test and enrollment") +
+  theme_minimal()
+```
+
+```{r distribution of number of symptoms at enrollment}
+ggplot(data = dt, aes(x = bl_NumSymp)) +
+  geom_histogram(alpha = 0.5, bins = 30) +
+  scale_x_continuous(breaks = seq(0,10,by=1)) +
+  scale_y_continuous(breaks = seq(0,60,by=10)) +
+  coord_cartesian(xlim = c(0, 10), ylim = c(0,60)) +
+  labs(x = "Number of symptoms reported", y = "N participants", title = "Distribution of number of COVID-19 symptoms at enrollment") +
+  theme_minimal()
+```
+
+## Create a baseline balance table
+
+```{r baseline balance}
+#----------------------------------
+# summarize baseline characteristics
+#----------------------------------
+t1vars <- dt %>%
+  select(-recordID,-an14,-tr) %>%
+  names()
+
+fmla <- formula(paste("~",paste(t1vars,collapse="+"),"| tr"))
+
+table1(fmla, 
+       data = dt,
+       render.continuous = c(.="Mean (SD)", 
+                             .="Median [Q1, Q3]"))
+```
+
+## Basline Race (excl. missing)
+
+Repeat balance by racial categories, excluding individuals for whom the measurement was missing (n=4 in azithromycin group)
+
+```{r baseline race nonmissing}
+dt_race <- dt %>%
+  filter(!is.na(race))
+
+table1(~race | tr, data = dt_race)
+```
+
+# Baseline balance among those measured at 14d
+
+Assess baseline balance among participants who were measured at 14 days (primary endpoint). 
+
+
+```{r baseline balance among individuals measured at 14d}
+
+#----------------------------------
+# cross tab of measured at 14 days
+# by group
+#----------------------------------
+table(dt$an14, dt$tr)
+dt2 <- dt %>%
+  filter(an14==1)
+
+#----------------------------------
+# summarize baseline characteristics
+# among participants measured at 14d
+#----------------------------------
+t1vars2 <- dt2 %>%
+  select(-recordID,-an14,-tr) %>%
+  names()
+
+fmla2 <- formula(paste("~",paste(t1vars2,collapse="+"),"| tr"))
+
+# render.cont <- function(x) {
+#   with(stats.apply.rounding(stats.default(round(x, 0)), digits = 2), 
+#        c("",
+#          "Mean (SD)" = sprintf("%s (%s)", MEAN, SD),
+#          "Median [Q1, Q3]" = sprintf("%s [%s,%s]", MEDIAN, Q1, Q3)
+#          )
+#        )
+# }
+
+table1(fmla2, 
+       data = dt2, 
+       render.continuous = c(.="Mean (SD)", 
+                             .="Median [Q1, Q3]")
+       ) 
+```
+
+## 14d Race (excl. missing)
+
+```{r 14d race nonmissing}
+dt2_race <- dt2 %>%
+  filter(!is.na(race))
+table1(~race | tr, data = dt2_race)
+```
+
+# Baseline balance among those missing at 14d
+
+Assess baseline balance among participants who were missing at 14 days (primary endpoint). 
+
+
+```{r baseline balance among individuals missing at 14d}
+#----------------------------------
+# cross tab of measured at 14 days
+# by group
+#----------------------------------
+table(dt$an14, dt$tr)
+dt3 <- dt %>%
+  filter(an14!=1)
+
+#----------------------------------
+# summarize baseline characteristics
+# among participants not measured at 14d
+#----------------------------------
+t1vars3 <- dt3 %>%
+  select(-recordID,-an14,-tr) %>%
+  names()
+
+fmla3 <- formula(paste("~",paste(t1vars3,collapse="+"),"| tr"))
+
+table1(fmla3, 
+       data = dt3, 
+       render.continuous = c(.="Mean (SD)", 
+                             .="Median [Q1, Q3]")
+       ) 
+```
+
+## Not meas. at 14d Race (excl. missing)
+
+```{r missing at 14d race nonmissing}
+dt3_race <- dt3 %>%
+  filter(!is.na(race))
+table1(~race | tr, data = dt3_race)
+```
+
+
+# Baseline comparison of those present v. missing at 14d
+
+Compare baseline characteristics among those missing at 14d (primary endpoint) versus those measured.  Differences between groups provide some insight into characteristics associated with missing outcomes.  The inverse probability of censoring weighted (IPCW) analysis in `4-action-missing-outcomes-analyses.Rmd` provides additional analysis and correction in this regard.
+
+```{r baseline characteristics by missingness status}
+
+#----------------------------------
+# create a factor for missing
+# at 14d for table formatting
+#----------------------------------
+table(dt$an14, dt$tr)
+dt4 <- dt %>%
+  mutate(miss14 = ifelse(an14==1,"Present","Missing"),
+         miss14 = factor(miss14))
+
+
+#----------------------------------
+# summarize baseline characteristics
+# among participants str
+#----------------------------------
+t1vars4 <- dt %>%
+  select(-recordID,-an14) %>%
+  names()
+
+fmla4 <- formula(paste("~",paste(t1vars4,collapse="+"),"| miss14"))
+
+table1(fmla4, 
+       data = dt4, 
+       render.continuous = c(.="Mean (SD)", 
+                             .="Median [Q1, Q3]")
+       ) 
+
+```
+
+## Missing vs. Non-missing at 14d Race (excl. missing)
+
+```{r missing v nonmissing at 14d race nonmissing}
+dt4_race <- dt4 %>%
+  filter(!is.na(race))
+table1(~race | tr, data = dt4_race)
+```
+
+# Charcteristics among those who took medication
+
+Compare baseline characteristics among those who took medication (Yes) versus those who did not (No)
+
+
+This excludes 47 patients with missing treatment adherence information.
+
+```{r baseline comparison among adherers vs non-adherers}
+#----------------------------------
+# retrieve information about whether
+# or not an individual took their
+# assigned medication from the 
+# CONSORT dataset
+# join it to the baseline balance
+# table
+#----------------------------------
+dc2 <- dc %>%
+  select(recordID, take_tr)
+
+dt5 <- dt %>%
+  left_join(dc2, by= "recordID")
+
+#----------------------------------
+# limit to 216 participants 
+# who have non-missing
+# information
+#----------------------------------
+table(dt5$tr,dt5$take_tr)
+dt5 %<>%
+  filter(!is.na(take_tr))
+
+label(dt5$tr) <- "Treatment group"
+
+#----------------------------------
+# summarize baseline characteristics
+#----------------------------------
+t5vars <- dt5 %>%
+  select(-recordID,-an14,-take_tr) %>%
+  names()
+
+fmla5 <- formula(paste("~",paste(t5vars,collapse="+"),"| take_tr"))
+
+table1(fmla5, 
+       data = dt5,
+       render.continuous = c(.="Mean (SD)", 
+                             .="Median [Q1, Q3]"))
+
+```
+
+
+Repeat the race table, excluding those with missing race information
+
+```{r baseline comparison among adherers vs non-adherers race nonmissing}
+dt5_race <- dt5 %>%
+  filter(!is.na(race))
+table1(~race | take_tr, data = dt5_race)
+```
+
+
+# Session Info
+```{r session info}
+sessionInfo()
+```
+

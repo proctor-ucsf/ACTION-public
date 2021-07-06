@@ -1,0 +1,523 @@
+---
+title: "ACTION trial"
+subtitle: "Missing Outcomes Analyses"
+author: "Ben Arnold ben.arnold@ucsf.edu"
+date: "updated: `r Sys.time()`"
+output: 
+  html_document:
+    theme: default
+    highlight: default
+    code_folding: hide
+    toc: true
+    toc_depth: 3
+    toc_float:
+      collapsed: true
+      smooth_scroll: true
+knit: (function(inputFile, encoding) {
+        rmarkdown::render(inputFile, 
+                          encoding   = encoding, 
+                          output_dir = "../../output/analysis"
+                          )})
+---
+
+# Summary
+
+In the primary analysis, 24% of participants were missing their primary outcome measurement at 14 days. Re-estimate effects of azithromycin on proportion symptom free at 14d by Inverse Probability of Censoring Weighted (IPCW) estimation, and under a pattern mixture model that assumes systematic differences in the outcome probability among those measured and those lost (Little et al. 2012).
+
+Little, R. J., D’Agostino, R., et al. The prevention and treatment of missing data in clinical trials. _N. Engl. J. Med._ 367, 1355–1360 (2012). https://pubmed.ncbi.nlm.nih.gov/23034025/
+
+# Preamble / configuration
+
+```{r preamble, message = FALSE}
+#---------------------------------
+# source the project's configuration
+# file
+#---------------------------------
+library(here)
+here()
+source(here("code","config.R"))
+
+
+```
+
+
+# Load the data
+
+Load the final analysis dataset. This file was created by `ACTION_analysis_data_prep.R`.
+
+
+```{r load the data}
+#---------------------------------
+# load the pre-processed data
+
+# final public analysis dataset
+# created with ACTION_analysis_data_prep.R
+# and ACTION_create_public_datasets.R
+#---------------------------------
+d <- read_rds(here("data/public","ACTION_analysis_public.rds"))
+
+#---------------------------------
+# rename the public id to recordID
+#---------------------------------
+d %<>% rename(recordID = id_public)
+
+#---------------------------------
+# create a shorter named treatment
+# variable and re-order the factor
+#
+# create a censoring indicator
+# for missing values at 14d
+#---------------------------------
+d %<>%
+  mutate(tr = tr_received,
+         tr = factor(tr, levels = c("Placebo","Azithromycin")),
+         sympfree = ifelse(symptomsfu_d14_None==1,1,0),
+         delt = ifelse(is.na(sympfree),0,1),
+         female = ifelse(gender=="Female",1,0)
+         )
+
+#---------------------------------
+# convert many variables from
+# factor to numeric 0/1
+#---------------------------------
+ftnfn <- function(x) {
+  return(as.numeric(levels(x))[x])
+}
+
+d %<>%
+  mutate(across(.cols=c( 
+         alcohol, cigarettes, marijuana, 
+         comorb_asthma, comorb_hypertension, 
+         takemacrolide, 
+         vit_multi,vit_c,vit_d,zinc, omega3, 
+         symptoms_Fever, symptoms_Cough, symptoms_Diarrhea, 
+         symptoms_AbPain, symptoms_Anosmia, symptoms_Conj, 
+         symptoms_SoreThroat, symptoms_ShortBreath, symptoms_Myalgia,
+         symptoms_Fatigue, symptoms_Dizzy
+         ), .fns = ftnfn)
+         )
+
+```
+
+# IPCW analysis
+
+## Censoring model
+
+Model the probability of being observed at 14d as a function of baseline covariates and treatment group. Include in the covariate set baseline covariates that are associated with the outcome (symptom free at 14d) in univariate analyses.  Include baseline covariates at least moderately associated with the outcome (P<0.2). The rationale for the screen is to avoid experimental treatment assignment violations that can result by over-fitting the propensity score model (Brookhart et al. 2006).   A P<0.2 is a somewhat arbitrary cutoff, but identifies 13 covariates below — a reasonable number given the relatively small size of the trial. 
+
+Brookhart, M. A., Schneeweiss, S., Rothman, K. J., Glynn, R. J., Avorn, J. & Sturmer, T. Variable Selection for Propensity Score Models. _Am. J. Epidemiol._ 163, 1149–1156 (2006). https://pubmed.ncbi.nlm.nih.gov/16624967/ 
+
+## Covariate screen
+```{r censoring model covariate screen}
+#----------------------------------
+# screen covariates based on
+# univariate associations with the
+# outcome and at least 5% prevalence
+# at baseline
+#
+# the 5% prevalence was based on
+# a visual screen of covariates
+# in the baseline balance table,
+# created by:
+# 2-action-baseline-balance-table.Rmd
+#----------------------------------
+screenvars <- d %>%
+  select(age, female, region, race,  
+         alcohol, cigarettes, marijuana, 
+         comorb_asthma, comorb_hypertension, 
+         takemacrolide, 
+         vit_multi,vit_c,vit_d,zinc, omega3, 
+         symptoms_Fever, symptoms_Cough, symptoms_Diarrhea, 
+         symptoms_AbPain, symptoms_Anosmia, symptoms_Conj, 
+         symptoms_SoreThroat, symptoms_ShortBreath, symptoms_Myalgia,
+         symptoms_Fatigue, symptoms_Dizzy, duration, test_to_enroll
+         ) %>%
+  names()
+  
+  
+var_screen <- foreach(screenvari = screenvars, .combine = rbind) %do% {
+  fmlai <- as.formula(paste("sympfree ~",screenvari))
+  fiti <- glm(formula = fmlai, family = binomial(link="logit"),data=d)
+  sumi <- broom::tidy(fiti)
+  return(sumi[-1,])
+}
+
+#----------------------------------
+# print a table, sorted by
+# p-value
+#----------------------------------
+knitr::kable(var_screen %>% arrange(p.value),
+             col.names = c("covariate","log OR","SE","Z","P-value"),
+             digits = 3) %>%
+  kable_styling(bootstrap_options = "striped")
+```
+
+## $P(\Delta=1 | A, W)$
+
+Model the probability of being observed at 14 days, $\Delta$, as a function of assigned treatment, $A$, and baseline covariates $W$, where 
+
+$g(\Delta|A,W) = \textrm{logit}~P(\Delta=1 | A, W) = \alpha + \beta A + \gamma W$
+
+```{r fit censoring model}
+#----------------------------------
+# identify the variables selected
+# through pre-screening
+#----------------------------------
+var_select <- var_screen %>%
+  filter(round(p.value,1) < 0.2)
+
+#----------------------------------
+# there were 3 individuals with
+# missing values for one or more of
+# these baseline measures. 
+# exclude them from fitting the
+# censoring model (n=260)
+# 
+# two individuals did not complete
+# the baseline symptoms questionnaire
+# and one individual did not record
+# their gender
+#----------------------------------
+dcens <- d %>%
+  select(delt, tr, sympfree, var_select$term) %>%
+  filter(!is.na(female) & !is.na(symptoms_Fever))
+
+
+censfmla <- as.formula(paste("delt ~ tr+",paste(var_select$term, collapse = "+")))
+
+fitc <- glm(formula = censfmla, data=dcens, family=binomial(link="logit"))
+summary(fitc)
+
+# dcens %<>%
+#   mutate(prob_delta = predict(fitc, newdata = dcens, type = "response"), 
+#          wi_delta = 1/prob_delta
+#   )
+dcens0 <- dcens %>%
+  mutate(tr = "Placebo")
+dcens1 <- dcens %>%
+  mutate(tr = "Azithromycin")
+
+dcens$prob_delta0 <- predict(fitc, newdata = dcens0, type = "response")
+dcens$wi_delta0 <- 1/dcens$prob_delta0
+dcens$prob_delta1 <- predict(fitc, newdata = dcens1, type = "response")
+dcens$wi_delta1 <- 1/dcens$prob_delta1
+
+
+```
+
+Examine the distributions of predicted probabilities of being observed, $\hat g(\Delta|A,W)$.  Both distributions are bounded away from 0 and 1. The distributions are also well-balanced between treatment groups. This is consistent with no evidence in the censoring model for an effect of azithromycin versus placebo on censoring at 14 days. 
+
+```{r plot probability of censoring by group boxplot, fig.width = 4}
+ggplot(data = dcens, aes(x = tr, y = prob_delta1)) +
+  geom_jitter(width = 0.2, alpha = 0.3) +
+  geom_boxplot(fill = NA, outlier.shape = NA) +
+  coord_cartesian(ylim = c(0,1)) + 
+  labs(x = "", y = "Predicted Probability of Being Observed at 14d") +
+  theme_minimal()
+
+```
+
+```{r plot probability of being observed by group histogram, fig.width = 4}
+ggplot(data = dcens, aes(x = prob_delta1, group = tr)) +
+  facet_grid(tr~.) +
+  geom_histogram(alpha = 0.5, color = "gray40", bins = 30) +
+  coord_cartesian(xlim = c(0,1)) + 
+  labs( x = "Predicted Probability of Being Observed") +
+  theme_minimal()
+
+```
+
+
+Examine the distributions of IPCW weights, $1/\hat P(\Delta=1|A,W)$.  Both distributions look reasonable, with no extreme weights (range is 1 to 3). 
+
+```{r plot inverse weights by group histogram, fig.width = 4}
+ggplot(data = dcens, aes(x = wi_delta1, group = tr)) +
+  facet_grid(tr~.) +
+  geom_histogram(alpha = 0.5, color = "gray40", bins = 30) +
+  # coord_cartesian(xlim = c(0,1)) + 
+  labs( x = "Inverse weights") +
+  theme_minimal()
+
+```
+
+## IPCW estimates
+
+Estimate differences between groups, re-weighted by the IPCW weights using a targeted maximum likelihood estimation approach. This approach assumes that outcomes are missing at random. That is, conditional on observed characteristics ($A,W$) there is no difference in outcomes between those observed and those missing.
+
+The approach weights each individual with an observed outcome by the inverse probability of being observed, $\hat g(\Delta | A,W)$, estimated above, thus upweighting participants who were less likely to be observed at 14 days. It estimates the association using a logistic regression model with weights, and then estimates the prevalence difference and ratio through doubly-robust targeted maximum likelihood estimation (TMLE).  Variance and confidence intervals are based on the influence curve. 
+
+van der Laan, M. J. & Rubin, D. Targeted Maximum Likelihood Learning. Int. J. Biostat. 2, 1–38 (2006).
+
+Gruber, S. & van der Laan, M. tmle: An R Package for Targeted Maximum Likelihood Estimation. _Journal of Statistical Software_, Articles 51, 1–35 (2012).
+
+```{r fit ipcw-tmle model}
+
+#----------------------------------
+# format a couple of vars for
+# the tmle() function
+#----------------------------------
+tx01 <- ifelse(dcens$tr=="Azithromycin",1,0)
+pDelta <- as.matrix(dcens %>% select(prob_delta0, prob_delta1))
+#----------------------------------
+# fit a TMLE model with IPCW weights
+# estimated above
+#----------------------------------
+set.seed(2435)
+tmle_fit <- tmle(Y = dcens$sympfree, 
+                 A = tx01,
+                 W = dcens[var_select$term], # covariates
+                 Delta = dcens$delt, # indicator of missingness
+                 g1W = rep(2/3,length(tx01)), # RCT 2:1 allocation, so fixed Pr(A|W)
+                 # pDelta1 = pDelta, # missingness probabilities estimated above
+                 family = "binomial",
+                 Q.SL.library = "SL.glm",
+                 g.SL.library = "SL.glm",
+                 g.Delta.SL.library = "SL.glm"
+                 )
+
+summary(tmle_fit)
+
+```
+
+```{r ipcw estimates}
+
+#----------------------------------
+# format the IPCW estimates
+#----------------------------------
+
+ipcw_pd    <- tmle_fit$estimates$ATE$psi
+ipcw_pd_ci <- tmle_fit$estimates$ATE$CI
+ipcw_pd_p  <- tmle_fit$estimates$ATE$pvalue
+ipcw_pr    <- tmle_fit$estimates$RR$psi
+ipcw_pr_ci <- tmle_fit$estimates$RR$CI
+ipcw_pr_p  <- tmle_fit$estimates$RR$pvalue
+
+
+```
+
+
+
+# MNAR pattern mixture model analysis
+
+In this analysis, we allow for the possibility that outcomes among those missing differ from patients who were mesured at the final endpoint as a function of observed characteristics ($A,W$) plus some systematic differences that are not observed. 
+
+Our approach follows that outlined in the _Prevention and Treatment of Missing Data_, National Research Council (2010) pages 92-93 (https://www.ncbi.nlm.nih.gov/books/NBK209904/). 
+
+First, construct a logit model of the outcome probability as a function of treatment group ($A$) and baseline covariates ($W$) selected above. $g(Pr(Y | A,W)) = logit[Pr(Y | A,W)] = \alpha + \beta A + \gamma W$. 
+
+Second, from the fitted model estimate predicted probabilities among all patients enrolled, including those with missing outcomes. 
+
+Third, adjust the predicted probabilities among patients with missing outcomes by a constant value, assumed to vary according to a constant parameter equal to the odds ratio of the outcome associated with missingness, where: $Pr(Y | A, W, \Delta = 0) = g^{-1}\left( g(Pr(Y | A, W, \Delta = 1)) +  log(OR)\right)$
+
+Fourth, estimate the mean outcome probability in each treatment group under an assumed OR associated with missingness. Estimate the prevalence difference and ratio between groups, and use bootstrap resampling (1000 iterations) to estimate 95% confidence intervals for each parameter of interest.
+
+We repeated the MNAR analysis under assumed ORs of 0.25, 0.50, 0.8, 1, 1.25, 2, 4 -- thereby implying that among those missing, the odds of the outcome could be systematically up to 4-fold lower or higher even after accounting for observed covariates.
+
+However, since outcome missingness was extremely well balanced between groups and not systematically different based on covariates (previous section) all sensitivity analyses result in consistent estimates with the primary, unadjusted analysis.
+
+## Proportion observed by group
+
+Summarize the proportion of patients with observed outcomes in both treatment groups
+```{r estimate not missing by tr}
+table(d$tr,!is.na(d$sympfree))
+dcens %>% group_by(tr) %>% summarize(notmissing = mean(delt),.groups = "keep")
+```
+
+```{r mnar analysis functions}
+#----------------------------------
+# logit and antilogit (expit) fns
+#----------------------------------
+logitfn <- function(x) {
+  log(x/(1-x))
+}
+expitfn <- function(x) {
+  exp(x)/(1+ exp(x))
+}
+
+#----------------------------------
+# function to conduct an MNAR
+# analysis for a binary outcome
+# as a function of covariates
+#
+# @df  : data frame that includes 
+#        the binary outcome (sympfree), treatment (tr), and 
+#        any auxiliaru covariates used in the outcome model
+# @OR  : the odds ratio for the outcome among those missing
+#        compared with those observed
+#
+# returns a data.frame with three values
+# the mean in the two treatment groups correcting for
+# informative missingness according to the OR and the difference
+#----------------------------------
+
+mnar_estimates <- function(df,OR) {
+  #----------------------------------
+  # 1. fit eta(W_0) 
+  # model probability of symptom free
+  # as a function of treatment arm
+  # and baseline characteristics
+  # that were associated with the 
+  # outcome (identified above)
+  #----------------------------------
+  fit_0 <- glm(sympfree ~., data=df, family=binomial() )
+  
+  #----------------------------------
+  # 2. predict outcomes among the
+  #    entire study population
+  #----------------------------------
+  pY1 <- predict(fit_0, newdata = df,type="response")
+  
+  #----------------------------------
+  # 3. shift the probabilities among
+  #    those missing by a constant
+  #    value, delta (equal to the log OR
+  #    of symptom free among those 
+  #    with missing values)
+  #----------------------------------
+  pY0 <- expitfn( logitfn(pY1) + log(OR) ) 
+  
+  #----------------------------------
+  # 4. calculate the sample means
+  #    in the two treatment groups
+  #    under the empirical mixture
+  #    of the missing/non-missing patients
+  #----------------------------------
+  mnar_est <- df %>%
+    mutate(pY0 = pY0,
+           pY1 = pY1,
+           pY = ifelse(is.na(sympfree),pY0,pY1)
+    ) %>%
+    group_by(tr) %>%
+    summarize(mu = mean(pY), .groups = "keep")
+  
+  #----------------------------------
+  # return results
+  #----------------------------------
+  est0 <- mnar_est$mu[mnar_est$tr=="Placebo"]
+  est1 <- mnar_est$mu[mnar_est$tr=="Azithromycin"]
+  return(data.frame(est0=est0,est1=est1,diff=est1-est0))
+}
+
+```
+
+
+```{r mnar analysis, warning=FALSE}
+#----------------------------------
+# subset the censoring data (above)
+# to the relevant variables
+#----------------------------------
+dmnar <- dcens %>%
+    select(-delt,-starts_with("prob_"),-starts_with("wi_"))
+
+#----------------------------------
+# over a range of ORs
+# use a bootstrap with 1000 iterations
+# to estimate uncertainty for each
+#  OR value
+#----------------------------------
+set.seed(2342)
+mnar_boot <- foreach(ori = c(0.25,0.5,0.8,1,1.25,2,4), .combine = rbind) %:%
+  foreach(bi = 1:1000, .combine = rbind) %do% {
+    di <- dmnar[sample(1:nrow(dmnar),size=nrow(dmnar),replace=TRUE),]
+    esti <- mnar_estimates(df=di,OR=ori)
+    data.frame(booti=bi,OR=ori,esti)
+    
+  }
+
+#----------------------------------
+# estimate means and bootstrap
+# 95% CIs for the difference 
+# and log ratio
+# between groups at each level of 
+# assume OR associated with 
+# missingness
+#----------------------------------
+mnar_summary <- mnar_boot %>%
+  group_by(OR) %>%
+  mutate(diff = est1-est0,
+         logratio = log(est1/est0)) %>%
+  summarize(mu0 = mean(est0),
+            mu1 = mean(est1),
+            rd = mean(diff),
+            rd_min95 = quantile(diff,probs=0.025),
+            rd_max95 = quantile(diff,probs=0.975),
+            
+            logrr = mean(logratio),
+            logrr_min95 = quantile(logratio,probs=0.025),
+            logrr_max95 = quantile(logratio,probs=0.975),
+            .groups = "keep"
+            ) %>%
+  mutate(rr = exp(logrr),
+         rr_min95 = exp(logrr_min95),
+         rr_max95 = exp(logrr_max95),
+         outcome = paste0("OR associated with missingness: ",sprintf("%1.2f",OR))
+         ) 
+
+```
+
+# Summary table
+
+```{r unadjusted estimates, message=FALSE, warning=FALSE}
+#----------------------------------
+# read-in the unadjusted estimates for
+# comparison. Estimates were generated
+# using the script:
+# 3-action-primary-secondary-outcomes.Rmd
+#----------------------------------
+
+est_unadj <- read_csv(file = here("output/analysis","action-primary-subgroup-results.csv"))
+
+# restrict to the overall estimates
+est_unadj %<>%
+  filter(outcome == "All patients") %>%
+  mutate(outcome = "Unadjusted")
+
+```
+
+
+```{r print a summary table}
+#----------------------------------
+# append the IPCW and MNAR
+# estimates to the
+# unadjusted estimates
+#----------------------------------
+ipcw_ests <- data.frame(outcome = "IPCW-adjusted †",rd = ipcw_pd, rd_min95 = ipcw_pd_ci[1], rd_max95 = ipcw_pd_ci[2], rr = ipcw_pr, rr_min95 = ipcw_pr_ci[1], rr_max95 = ipcw_pr_ci[2]) 
+
+mnar_ests <- mnar_summary %>%
+  ungroup() %>%
+  select(outcome,starts_with("rd"),starts_with("rr"))
+
+miss_ests <- ipcw_ests %>%
+  bind_rows(mnar_ests) %>%
+  mutate(rd_print = paste0(sprintf("%1.2f",rd)," (",sprintf("%1.2f",rd_min95),", ",sprintf("%1.2f",rd_max95),")"),
+         rr_print = paste0(sprintf("%1.2f",rr)," (",sprintf("%1.2f",rr_min95),", ",sprintf("%1.2f",rr_max95),")")
+         )
+
+miss_table <- est_unadj %>%
+  bind_rows(miss_ests) %>%
+  select(outcome,nmeas0,npos0,pct0_print,nmeas,npos,pct1_print,rd_print,rr_print)
+
+#----------------------------------
+# print table
+#----------------------------------
+options(knitr.kable.NA = '')
+knitr::kable(miss_table, digits = 3, align = c("l","r","r","r","r","r","r","c","c"),
+             caption = "Symptom Free at 14 days by treatment group, unadjusted and accounting for missing outcome data.",
+             col.names = c("Analysis","N","Pos.","(%)","N","Pos.","(%)","PD (95% CI)","PR (95% CI)")) %>%
+  kable_styling(bootstrap_options = "striped") %>%
+  add_header_above(c(" " = 1, "Azithromycin" = 3, "Placebo" = 3, " " = 1, " " = 1 )) %>%
+  pack_rows(group_label="MNAR pattern mixture model analysis ‡",start_row = 3, end_row = 9) %>%
+  footnote(
+    symbol=c("N: number measured; Pos.: number positive; PD: prevalence difference; PR: prevalence ratio.","IPCW: inverse probability of censoring weighted estimate obtained through targeted maximum likelihood estimation, weighted by the inverse probability of being observed (thus upweighting participants least likely to be observed). IPCW weights were modeled as a function of covariates associated with the outcome: age, gender, alcohol use, marijuana use, and baseline symptoms (fever, cough, sore throat, diarrhea, abdominal pain, shortness of breath, myalgia, fatigue, dizziness). ","MNAR: missing not at random analysis, in which the outcomes for missing patients were imputed as a function of covariates used in the IPCW analysis, plus assumed systmatic differences between missing and non-missing patients in their outcome probability measured using an odds ratio (OR). Final marginal differences estimated assuming a mixture of outcomes among missing and non-missing patients."))
+
+
+
+```
+
+
+
+# Session Info
+```{r session info}
+sessionInfo()
+```
+
