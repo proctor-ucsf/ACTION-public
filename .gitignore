@@ -37,3 +37,15 @@ vignettes/*.pdf
 
 # R Environment Variables
 .Renviron
+
+# Mac OS files
+*.DS_Store
+
+# data
+data/
+
+# output reports
+output/
+
+#figures - from codebook
+figure/
