@@ -85,7 +85,7 @@ Lost to follow-up is a mutually exclusive outcome across study visits, whereas t
 #---------------------------------
 dc1 <- dc %>% summarise(
   `Assessed for eligibility`                 = n(),
-  `Excluded (Overall)`                       = sum(consented == 3 | is.na(consented), na.rm = T),
+  `Excluded (Overall)`                       = sum(consented == 3 | is.na(consented)),
   `Negative COVID test`                      = sum(elig_test == 0, na.rm = T),
   `COVID test out of window`                 = sum(elig_window == 0, na.rm = T),
   `DOB implies below 18 years old`           = sum(elig_age == 0, na.rm = T),
@@ -98,13 +98,8 @@ dc1 <- dc %>% summarise(
   `Unable to complete online questionnaires` = sum(elig_onlineforms == 0, na.rm = T),
   `Other reason for ineligibility`           = sum(elig_no_other == 0, na.rm = T),
   `Refused (Overall)`                        = sum(consented == 2, na.rm = T),
-  `Refused - Outside antibiotic use`         = sum(refused_antibiotics == 1, na.rm = T),
-  `Refused - Did not want placebo`           = sum(refused_placebo == 1, na.rm = T),
-  `Refused - Other`                          = sum(refused_other == 1, na.rm = T),
-  `Refused - No reason given`                = sum(consented == 2 & refused_antibiotics == 0 & 
-                                                     refused_placebo == 0 & refused_other == 0, na.rm = T),
   `Could not be reached`                     = sum(consented == 3, na.rm = T),
-  `Enrolled (Overall)`                                 = sum(consented == 1, na.rm = T)
+  `Enrolled (Overall)`                       = sum(consented == 1, na.rm = T)
 ) %>% 
   # transpose
   t() %>% 
@@ -113,8 +108,9 @@ dc1 <- dc %>% summarise(
   rename(Number = V1)
 
 kable(dc1) %>% 
-  row_spec(c(2, 14, 20), bold = T, italic = T)
+  row_spec(c(1, 2, 14, 16), bold = T, italic = T)
 ```
+*Note: in response to editorial comments we included a finer stratification of the refusals, tallied by hand, for the final flow diagram*
 
 ## Allocation and Follow-up
 ```{r consort flow followup}
