@@ -85,33 +85,32 @@ Lost to follow-up is a mutually exclusive outcome across study visits, whereas t
 #---------------------------------
 dc1 <- dc %>% summarise(
   `Assessed for eligibility`                 = n(),
-  `Excluded (Overall)`                       = sum(consented == 3 | is.na(consented)),
-  `Negative COVID test`                      = sum(elig_test == 0, na.rm = T),
+  `Excluded (Overall)`                       = sum(consented %in% c(2,3) | is.na(consented)),
   `COVID test out of window`                 = sum(elig_window == 0, na.rm = T),
+  `Negative COVID test`                      = sum(elig_test == 0, na.rm = T),
+  `Could not be reached for consent`         = sum(consented == 3, na.rm = T),
+  `Refused (Overall)`                        = sum(consented == 2, na.rm = T),
   `DOB implies below 18 years old`           = sum(elig_age == 0, na.rm = T),
+  `Unable to complete online questionnaires` = sum(elig_onlineforms == 0, na.rm = T),
+  `Unable to receive study drug in mail`     = sum(elig_maildrug == 0, na.rm = T),
   `Macrolide allergy`                        = sum(elig_allergy == 0, na.rm = T),
-  `Currently hospitalized`                   = sum(elig_hosp == 0, na.rm = T),
   `Over 55 and on hydroxychloroquine`        = sum(elig_hcq55 == 0, na.rm = T),
   `Currently taking nelfinavir or warfarin`  = sum(elig_nelfwar == 0, na.rm = T),
   `Prolonged QT`                             = sum(elig_qt == 0, na.rm = T),
   `Pregnant`                                 = sum(elig_preg == 0, na.rm = T),
-  `Unable to receive study drug in mail`     = sum(elig_maildrug == 0, na.rm = T),
-  `Unable to complete online questionnaires` = sum(elig_onlineforms == 0, na.rm = T),
   `Other reason for ineligibility`           = sum(elig_no_other == 0, na.rm = T),
-  `Refused (Overall)`                        = sum(consented == 2, na.rm = T),
-  `Could not be reached`                     = sum(consented == 3, na.rm = T),
   `Enrolled (Overall)`                       = sum(consented == 1, na.rm = T)
 ) %>% 
   # transpose
   t() %>% 
   as.data.frame() %>% 
   rownames_to_column(var = "Variable") %>% 
-  rename(Number = V1)
+  rename(Number = V1) 
 
 kable(dc1) %>% 
-  row_spec(c(1, 2, 14, 16), bold = T, italic = T)
+  row_spec(c(1, 2, 16), bold = T, italic = T)
 ```
-*Note: in response to editorial comments we included a finer stratification of the refusals, tallied by hand, for the final flow diagram*
+*Note: in response to editorial comments we included a finer stratification of the refusals and other reasons for ineligibility, tallied by hand, for the final flow diagram*
 
 ## Allocation and Follow-up
 ```{r consort flow followup}
