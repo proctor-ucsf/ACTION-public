@@ -93,6 +93,7 @@ dc1 <- dc %>% summarise(
   `Currently hospitalized`                   = sum(elig_hosp == 0, na.rm = T),
   `Over 55 and on hydroxychloroquine`        = sum(elig_hcq55 == 0, na.rm = T),
   `Currently taking nelfinavir or warfarin`  = sum(elig_nelfwar == 0, na.rm = T),
+  `Prolonged QT`                             = sum(elig_qt == 0, na.rm = T),
   `Pregnant`                                 = sum(elig_preg == 0, na.rm = T),
   `Unable to receive study drug in mail`     = sum(elig_maildrug == 0, na.rm = T),
   `Unable to complete online questionnaires` = sum(elig_onlineforms == 0, na.rm = T),
