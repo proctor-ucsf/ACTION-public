@@ -1,10 +1,11 @@
 # ACTION-public
 Public repository for the ACTION trial: Azithromycin for COVID-19 Treatment, Investigating Outpatients Nationwide
 
-
 ## Description
 
-This repo includes the R code to complete all analyses for the article _Effect of Oral Azithromycin vs Placebo on COVID-219 Symptoms in Outpatients With SARS-CoV-2 Infection_, Oldenburg et al. JAMA 2021.
+This repo includes the R code to complete all analyses for the article:
+
+_Effect of Oral Azithromycin vs Placebo on COVID-219 Symptoms in Outpatients With SARS-CoV-2 Infection_, Oldenburg et al. _JAMA_ 2021. doi:10.1001/jama.2021.11517
 
 This repo is mirrored on the Open Science Framework (OSF), where we have additionally archived the study's datasets and computational notebook output files: https://osf.io/ca3pe/
 
